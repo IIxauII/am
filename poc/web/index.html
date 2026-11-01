@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>am playback engine</title>
+  <style>
+    :root { color-scheme: light dark; font: 15px/1.5 system-ui, sans-serif; }
+    body { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+    button { font: inherit; padding: .5rem 1rem; }
+    #status { font-family: ui-monospace, monospace; white-space: pre-wrap; padding: .75rem; border: 1px solid #8884; border-radius: 6px; }
+    #log { font-family: ui-monospace, monospace; font-size: 12px; opacity: .8; white-space: pre-wrap; }
+    /* The engine page draws nothing (its state is `am status`); the sign-in page shows it all. */
+    .signin-only { display: none; }
+    body.signin .signin-only { display: block; }
+  </style>
+  <!-- app.js registers the musickitloaded listener, so it must run before musickit.js -->
+  <script src="/app.js"></script>
+  <script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js" async></script>
+</head>
+<body>
+  <h1>am</h1>
+  <div class="signin-only">
+    <p>Connect <b>am</b> to your Apple Music account. Apple's sign-in opens in a popup.</p>
+    <p><button id="signin" disabled>Sign in to Apple Music</button></p>
+    <p id="done" hidden>✔ Done. You can close this tab; the terminal has the token.</p>
+  </div>
+  <div id="status" class="signin-only">loading MusicKit…</div>
+  <h2 class="signin-only">Events</h2>
+  <div id="log" class="signin-only"></div>
+</body>
+</html>

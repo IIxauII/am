@@ -1,0 +1,273 @@
+{
+ "results": {
+  "albums": [
+   {
+    "chart": "most-played",
+    "name": "Top Albums",
+    "orderId": "most-played:albums",
+    "next": "/v1/catalog/gb/charts?chart=most-played&limit=50&offset=50&types=albums",
+    "data": [
+     {
+      "id": "1000000401",
+      "type": "albums",
+      "attributes": {
+       "artistName": "Placeholder Artist",
+       "artwork": {
+        "bgColor": "114a21",
+        "height": 3000,
+        "textColor1": "b4f4c3",
+        "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/00/00/00/00000000-0000-0000-0000-000000000001/cover.jpg/{w}x{h}bb.jpg",
+        "width": 3000
+       },
+       "contentRating": "explicit",
+       "editorialNotes": {
+        "short": "Placeholder editorial note."
+       },
+       "genreNames": [
+        "Hip-Hop/Rap",
+        "Music"
+       ],
+       "name": "Placeholder Album",
+       "playParams": {
+        "id": "1000000401",
+        "kind": "album"
+       },
+       "releaseDate": "2026-10-16",
+       "trackCount": 16
+      }
+     },
+     {
+      "id": "6792085051",
+      "type": "albums",
+      "attributes": {
+       "artistName": "Fontaines D.C.",
+       "artwork": {
+        "bgColor": "943959",
+        "height": 4000,
+        "textColor1": "faeee0",
+        "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/24/10/8c/24108c9c-845b-40f3-6175-9effb95e1d5c/191404167373.png/{w}x{h}bb.jpg",
+        "width": 4000
+       },
+       "contentRating": "explicit",
+       "editorialNotes": {
+        "short": "Placeholder editorial note."
+       },
+       "genreNames": [
+        "Alternative",
+        "Music"
+       ],
+       "name": "Dopamine Chamber",
+       "playParams": {
+        "id": "6792085051",
+        "kind": "album"
+       },
+       "releaseDate": "2026-10-16",
+       "trackCount": 11
+      }
+     }
+    ]
+   }
+  ],
+  "dailyGlobalTopCharts": [
+   {
+    "chart": "daily-global-top",
+    "name": "Daily Top 100",
+    "orderId": "daily-global-top:dailyGlobalTopCharts",
+    "next": "/v1/catalog/gb/charts?chartId=119&limit=50&offset=50",
+    "data": [
+     {
+      "id": "pl.d25f5d1181894928af76c85c967f8f31",
+      "type": "playlists",
+      "attributes": {
+       "artwork": {
+        "bgColor": "f1f1f1",
+        "height": 1080,
+        "textColor1": "000000",
+        "url": "https://is1-ssl.mzstatic.com/image/thumb/Features116/v4/c6/05/b6/c605b65a-427f-0165-33c1-a8d2f99877e9/5f02f9bb-8eb2-4c79-bdb8-6bfb24a57e96.png/{w}x{h}cc.jpg",
+        "width": 4320
+       },
+       "curatorName": "Apple Music",
+       "description": {
+        "standard": "Placeholder editorial description."
+       },
+       "isChart": true,
+       "name": "Top 100: Global",
+       "playParams": {
+        "id": "pl.d25f5d1181894928af76c85c967f8f31",
+        "kind": "playlist",
+        "versionHash": "68d5b63214917c7ff914272c48313dcfc416b3e1ea3f1f1de45a07270d3ca6d3"
+       },
+       "playlistType": "editorial"
+      }
+     },
+     {
+      "id": "pl.00000000000000000000000000000100",
+      "type": "playlists",
+      "attributes": {
+       "artwork": {
+        "bgColor": "f1f1f1",
+        "height": 1080,
+        "textColor1": "000000",
+        "url": "https://is1-ssl.mzstatic.com/image/thumb/Features116/v4/00/00/00/00000000-0000-0000-0000-000000000100/chart.png/{w}x{h}cc.jpg",
+        "width": 4320
+       },
+       "curatorName": "Apple Music",
+       "description": {
+        "standard": "Placeholder editorial description."
+       },
+       "isChart": true,
+       "name": "Top 100: USA",
+       "playParams": {
+        "id": "pl.00000000000000000000000000000100",
+        "kind": "playlist",
+        "versionHash": "0000000000000000000000000000000000000000000000000000000000000000"
+       },
+       "playlistType": "editorial"
+      }
+     }
+    ]
+   }
+  ],
+  "playlists": [
+   {
+    "chart": "most-played",
+    "name": "Top Playlists",
+    "orderId": "most-played:playlists",
+    "next": "/v1/catalog/gb/charts?chart=most-played&limit=50&offset=50&types=playlists",
+    "data": [
+     {
+      "id": "pl.f4d106fed2bd41149aaacabb233eb5eb",
+      "type": "playlists",
+      "attributes": {
+       "artwork": {
+        "bgColor": "f6f6f6",
+        "height": 1080,
+        "textColor1": "000000",
+        "url": "https://is1-ssl.mzstatic.com/image/thumb/Features/v4/65/02/0a/65020a06-097f-1df8-79d3-994f9c6c0632/5fad68e7-3e43-4c7a-aedb-d4bbbe9a8386.png/{w}x{h}SC.DN01.jpg?l=en-US",
+        "width": 1080
+       },
+       "curatorName": "Apple Music Hits",
+       "description": {
+        "short": "Placeholder editorial note.",
+        "standard": "Placeholder editorial description."
+       },
+       "isChart": false,
+       "name": "Today's Hits",
+       "playParams": {
+        "id": "pl.f4d106fed2bd41149aaacabb233eb5eb",
+        "kind": "playlist",
+        "versionHash": "f02b2b34cdc898e14581bb5f2d117c42db0ba8c3e0d2c0f65d78b78fa5a5f089"
+       },
+       "playlistType": "editorial"
+      }
+     },
+     {
+      "id": "pl.cb4d1c09a2df4230a78d0395fe1f8fde",
+      "type": "playlists",
+      "attributes": {
+       "artwork": {
+        "bgColor": "0d1210",
+        "height": 1080,
+        "textColor1": "ffffff",
+        "url": "https://is1-ssl.mzstatic.com/image/thumb/Features125/v4/dc/47/7c/dc477c6f-9029-bd1c-8e89-87b04042a55b/U0MtTVMtV1ctUGlhbm9fQ2hpbGwtQURBTV9JRD0xMDcyODMxMzA0LnBuZw.png/{w}x{h}SC.DNC01.jpg?l=en-US",
+        "width": 1080
+       },
+       "curatorName": "Apple Music Classical",
+       "description": {
+        "short": "Placeholder editorial note.",
+        "standard": "Placeholder editorial description."
+       },
+       "isChart": false,
+       "name": "Piano Chill",
+       "playParams": {
+        "id": "pl.cb4d1c09a2df4230a78d0395fe1f8fde",
+        "kind": "playlist",
+        "versionHash": "8b64413445f06acf7e0fddab45a6b0384a1879401167e0842a22beeb4ba74c43"
+       },
+       "playlistType": "editorial"
+      }
+     }
+    ]
+   }
+  ],
+  "songs": [
+   {
+    "chart": "most-played",
+    "name": "Top Songs",
+    "orderId": "most-played:songs",
+    "next": "/v1/catalog/gb/charts?chart=most-played&limit=50&offset=50&types=songs",
+    "data": [
+     {
+      "id": "6822497774",
+      "type": "songs",
+      "attributes": {
+       "albumName": "Housewife - Single",
+       "artistName": "Tate McRae",
+       "artwork": {
+        "bgColor": "19180e",
+        "height": 3000,
+        "textColor1": "dbaf8f",
+        "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/2b/96/2b/2b962b77-3a04-5650-aefd-37ecfce04b03/196874840146.jpg/{w}x{h}bb.jpg",
+        "width": 3000
+       },
+       "discNumber": 1,
+       "durationInMillis": 208810,
+       "genreNames": [
+        "Pop",
+        "Music"
+       ],
+       "name": "Housewife",
+       "playParams": {
+        "id": "6822497774",
+        "kind": "song"
+       },
+       "releaseDate": "2026-10-15",
+       "trackNumber": 1
+      }
+     },
+     {
+      "id": "6769070199",
+      "type": "songs",
+      "attributes": {
+       "albumName": "Movin' To The Sun - Single",
+       "artistName": "HUGEL, Imael Angel & Ultra Naté",
+       "artwork": {
+        "bgColor": "481f0c",
+        "height": 3000,
+        "textColor1": "ebb88d",
+        "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/96/61/7a/96617ab5-51da-7cfc-97e5-c5a6a893c210/1087654.jpg/{w}x{h}bb.jpg",
+        "width": 3000
+       },
+       "contentRating": "clean",
+       "discNumber": 1,
+       "durationInMillis": 142200,
+       "genreNames": [
+        "Electronic",
+        "Music",
+        "Dance",
+        "House"
+       ],
+       "name": "Movin' To The Sun",
+       "playParams": {
+        "id": "6769070199",
+        "kind": "song"
+       },
+       "releaseDate": "2026-05-22",
+       "trackNumber": 1
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "meta": {
+  "results": {
+   "order": [
+    "most-played:songs",
+    "daily-global-top:dailyGlobalTopCharts",
+    "most-played:playlists",
+    "most-played:albums"
+   ]
+  }
+ }
+}

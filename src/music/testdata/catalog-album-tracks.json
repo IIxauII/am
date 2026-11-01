@@ -1,0 +1,62 @@
+{
+ "data": [
+  {
+   "id": "1560650223",
+   "type": "songs",
+   "attributes": {
+    "albumName": "Isles (Deluxe)",
+    "artistName": "Bicep",
+    "artwork": {
+     "bgColor": "ff3e35",
+     "height": 6000,
+     "textColor1": "030108",
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/f7/8f/9a/f78f9a66-bb06-467f-5a82-89396fc8203b/5054429149173.png/{w}x{h}bb.jpg",
+     "width": 6000
+    },
+    "discNumber": 1,
+    "durationInMillis": 348307,
+    "genreNames": [
+     "Electronic",
+     "Music"
+    ],
+    "inFavorites": false,
+    "name": "Atlas",
+    "playParams": {
+     "id": "1560650223",
+     "kind": "song"
+    },
+    "releaseDate": "2020-03-24",
+    "trackNumber": 1
+   }
+  },
+  {
+   "id": "1560650224",
+   "type": "songs",
+   "attributes": {
+    "albumName": "Isles (Deluxe)",
+    "artistName": "Bicep",
+    "artwork": {
+     "bgColor": "ff3e35",
+     "height": 6000,
+     "textColor1": "030108",
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/f7/8f/9a/f78f9a66-bb06-467f-5a82-89396fc8203b/5054429149173.png/{w}x{h}bb.jpg",
+     "width": 6000
+    },
+    "discNumber": 1,
+    "durationInMillis": 262947,
+    "genreNames": [
+     "Electronic",
+     "Music"
+    ],
+    "inFavorites": false,
+    "name": "Cazenove",
+    "playParams": {
+     "id": "1560650224",
+     "kind": "song"
+    },
+    "releaseDate": "2021-01-22",
+    "trackNumber": 2
+   }
+  }
+ ]
+}

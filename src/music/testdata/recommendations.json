@@ -1,0 +1,133 @@
+{
+ "data": [
+  {
+   "id": "6-27s5hU6azhJY",
+   "type": "personal-recommendation",
+   "attributes": {
+    "isGroupRecommendation": false,
+    "kind": "music-recommendations",
+    "nextUpdateDate": "2026-10-19T17:30:51Z",
+    "resourceTypes": [
+     "playlists"
+    ],
+    "title": {
+     "stringForDisplay": "Playlists Made for You"
+    }
+   },
+   "relationships": {
+    "contents": {
+     "data": [
+      {
+       "id": "pl.pm-AAAA0001",
+       "type": "playlists",
+       "attributes": {
+        "artwork": {
+         "bgColor": "b1181f",
+         "height": 1080,
+         "textColor1": "ffffff",
+         "url": "https://is1-ssl.mzstatic.com/image/thumb/Features/v4/cd/33/6f/cd336ff9-1bb2-359a-6f82-f9cefe6a0901/c1922c09-ac40-4ca1-97e0-dfdfb174518d.png/{w}x{h}cc.jpg",
+         "width": 4320
+        },
+        "curatorName": "Apple Music",
+        "description": {
+         "standard": "Placeholder editorial description."
+        },
+        "isChart": false,
+        "name": "Get Up!",
+        "playParams": {
+         "id": "pl.pm-AAAA0001",
+         "kind": "playlist",
+         "versionHash": "29f1fa2d5ecbfd3d963f773b475abb82e4b187ec20fa92ec1ab3d316fae15e5c"
+        },
+        "playlistType": "personal-mix"
+       }
+      },
+      {
+       "id": "pl.pm-AAAA0002",
+       "type": "playlists",
+       "attributes": {
+        "artwork": {
+         "bgColor": "19366a",
+         "height": 1080,
+         "textColor1": "ffffff",
+         "url": "https://is1-ssl.mzstatic.com/image/thumb/Features211/v4/a2/4d/92/a24d9211-14a2-4bdc-9d9a-bccea0e0af74/603feffa-2eb0-4f30-9287-3fc4b946bd3a.png/{w}x{h}cc.jpg",
+         "width": 4320
+        },
+        "curatorName": "Apple Music",
+        "description": {
+         "standard": "Placeholder editorial description."
+        },
+        "isChart": false,
+        "name": "Chill",
+        "playParams": {
+         "id": "pl.pm-AAAA0002",
+         "kind": "playlist",
+         "versionHash": "03a7c0c40dfa7d690b8747218e08c5ebb6489a66dbc9b76a6c1e64e6f3c69676"
+        },
+        "playlistType": "personal-mix"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "7-AAAA",
+   "type": "personal-recommendation",
+   "attributes": {
+    "kind": "music-recommendations",
+    "title": {
+     "stringForDisplay": "Stations for You"
+    }
+   },
+   "relationships": {
+    "contents": {
+     "data": [
+      {
+       "id": "ra.978194965",
+       "type": "stations",
+       "attributes": {
+        "artwork": {
+         "bgColor": "f6f6f6",
+         "height": 1080,
+         "textColor1": "160105",
+         "url": "https://is1-ssl.mzstatic.com/image/thumb/Features221/v4/fd/45/5b/fd455ba0-4a4d-854b-fc65-6d48f70be2f4/7da7d278-56c7-42a7-a801-d2193b71770a.png/{w}x{h}sr.jpg",
+         "width": 4320
+        },
+        "editorialNotes": {
+         "short": "Live now"
+        },
+        "isLive": true,
+        "name": "Apple Music 1",
+        "playParams": {
+         "format": "stream",
+         "hasDrm": true,
+         "id": "ra.978194965",
+         "kind": "radioStation",
+         "mediaType": 0,
+         "stationHash": "CgkIBRoFlaS40gMQBA"
+        },
+        "stationProviderName": "Apple Music"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "8-AAAA",
+   "type": "personal-recommendation",
+   "attributes": {
+    "kind": "music-recommendations",
+    "title": {
+     "stringForDisplay": "Nothing Here"
+    }
+   },
+   "relationships": {
+    "contents": {
+     "data": []
+    }
+   }
+  }
+ ]
+}

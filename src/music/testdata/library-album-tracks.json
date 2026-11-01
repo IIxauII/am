@@ -1,0 +1,91 @@
+{
+ "data": [
+  {
+   "id": "i.AAAA0013",
+   "type": "library-songs",
+   "attributes": {
+    "albumName": "Album One",
+    "artistName": "Artist One",
+    "artwork": {
+     "height": 1200,
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/00/00/00/00000000-0000-0000-0000-000000000001/cover.jpg/{w}x{h}bb.jpg",
+     "width": 1200
+    },
+    "discNumber": 2,
+    "durationInMillis": 193000,
+    "genreNames": [
+     "Alternative"
+    ],
+    "inFavorites": false,
+    "name": "Bonus",
+    "playParams": {
+     "id": "i.AAAA0013",
+     "isLibrary": true,
+     "kind": "song",
+     "catalogId": "1000000013"
+    },
+    "releaseDate": "2021-05-21",
+    "trackNumber": 1
+   }
+  },
+  {
+   "id": "i.AAAA0012",
+   "type": "library-songs",
+   "attributes": {
+    "albumName": "Album One",
+    "artistName": "Artist One",
+    "artwork": {
+     "height": 1200,
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/00/00/00/00000000-0000-0000-0000-000000000001/cover.jpg/{w}x{h}bb.jpg",
+     "width": 1200
+    },
+    "discNumber": 1,
+    "durationInMillis": 192000,
+    "genreNames": [
+     "Alternative"
+    ],
+    "inFavorites": false,
+    "name": "Second",
+    "playParams": {
+     "id": "i.AAAA0012",
+     "isLibrary": true,
+     "kind": "song",
+     "catalogId": "1000000012"
+    },
+    "releaseDate": "2021-05-21",
+    "trackNumber": 2
+   }
+  },
+  {
+   "id": "i.AAAA0011",
+   "type": "library-songs",
+   "attributes": {
+    "albumName": "Album One",
+    "artistName": "Artist One",
+    "artwork": {
+     "height": 1200,
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/00/00/00/00000000-0000-0000-0000-000000000001/cover.jpg/{w}x{h}bb.jpg",
+     "width": 1200
+    },
+    "discNumber": 1,
+    "durationInMillis": 191000,
+    "genreNames": [
+     "Alternative"
+    ],
+    "inFavorites": true,
+    "name": "Opener",
+    "playParams": {
+     "id": "i.AAAA0011",
+     "isLibrary": true,
+     "kind": "song",
+     "catalogId": "1000000011"
+    },
+    "releaseDate": "2021-05-21",
+    "trackNumber": 1
+   }
+  }
+ ],
+ "meta": {
+  "total": 3
+ }
+}

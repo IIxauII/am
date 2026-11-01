@@ -1,0 +1,5 @@
+[tools]
+# Also pinned in build.zig.zon (minimum_zig_version).
+zig = "0.17.0"
+# Deploys the token service (token-worker/, SETUP.md section 6).
+wrangler = "4.151.1"

@@ -1,0 +1,374 @@
+{
+ "data": [
+  {
+   "id": "349736311",
+   "type": "artists",
+   "attributes": {
+    "artwork": {
+     "bgColor": "000000",
+     "height": 3000,
+     "textColor1": "fa4234",
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/AMCArtistImages211/v4/ca/cd/50/cacd509c-b0d0-9767-afed-2568bb48bb80/ami-identity-c9ba08a71090ad5f6094375f4aa48f32-2025-05-21T14-28-34.785Z_cropped.png/{w}x{h}bb.jpg",
+     "width": 3000
+    },
+    "genreNames": [
+     "Alternative"
+    ],
+    "inFavorites": false,
+    "name": "twenty one pilots"
+   },
+   "views": {
+    "appears-on-albums": {
+     "attributes": {
+      "title": "Appears On"
+     },
+     "data": []
+    },
+    "featured-playlists": {
+     "attributes": {
+      "title": "Artist Playlists"
+     },
+     "data": [
+      {
+       "id": "pl.a3c85fff29e64685b5ab0ab1646b7bd6",
+       "type": "playlists",
+       "attributes": {
+        "artwork": {
+         "bgColor": "000000",
+         "height": 1080,
+         "textColor1": "fa4234",
+         "url": "https://is1-ssl.mzstatic.com/image/thumb/AMCArtistImages211/v4/ca/cd/50/cacd509c-b0d0-9767-afed-2568bb48bb80/ami-identity-c9ba08a71090ad5f6094375f4aa48f32-2025-05-21T14-28-34.785Z_cropped.png/{w}x{h}SC.FPESS04.jpg?l=en-US",
+         "width": 1080
+        },
+        "curatorName": "Apple Music Alternative",
+        "description": {
+         "short": "Placeholder editorial note.",
+         "standard": "Placeholder editorial description."
+        },
+        "inFavorites": false,
+        "isChart": false,
+        "name": "twenty one pilots Essentials",
+        "playParams": {
+         "id": "pl.a3c85fff29e64685b5ab0ab1646b7bd6",
+         "kind": "playlist",
+         "versionHash": "5e823ffca8972ee81c7bfed572d1d72cfc06dd981e4dd1b0450e649fe6ce558c"
+        },
+        "playlistType": "editorial"
+       }
+      },
+      {
+       "id": "pl.1465934c4fe842a38cda6b77e1f5e657",
+       "type": "playlists",
+       "attributes": {
+        "artwork": {
+         "bgColor": "000000",
+         "height": 1080,
+         "textColor1": "fa4234",
+         "url": "https://is1-ssl.mzstatic.com/image/thumb/AMCArtistImages211/v4/ca/cd/50/cacd509c-b0d0-9767-afed-2568bb48bb80/ami-identity-c9ba08a71090ad5f6094375f4aa48f32-2025-05-21T14-28-34.785Z_cropped.png/{w}x{h}SC.FPSL02.jpg?l=en-US",
+         "width": 1080
+        },
+        "curatorName": "Apple Music Alternative",
+        "description": {
+         "standard": "Placeholder editorial description."
+        },
+        "inFavorites": false,
+        "isChart": false,
+        "name": "Setlist: twenty one pilots, The Clancy World Tour",
+        "playParams": {
+         "id": "pl.1465934c4fe842a38cda6b77e1f5e657",
+         "kind": "playlist",
+         "versionHash": "08437025bad3de3e6c7f4bba7dd303ca1b8d74dcbe6b66a808fa4a455457696d"
+        },
+        "playlistType": "editorial"
+       }
+      }
+     ]
+    },
+    "full-albums": {
+     "attributes": {
+      "title": "Albums"
+     },
+     "data": [
+      {
+       "id": "6796494276",
+       "type": "albums",
+       "attributes": {
+        "artistName": "twenty one pilots",
+        "artwork": {
+         "bgColor": "9a2309",
+         "height": 1425,
+         "textColor1": "f9cfbc",
+         "url": "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/02/18/7f/02187fb6-d513-e035-f7cf-2384051b8cfc/075679587718.jpg/{w}x{h}bb.jpg",
+         "width": 1425
+        },
+        "editorialNotes": {
+         "short": "Placeholder editorial note."
+        },
+        "genreNames": [
+         "Alternative",
+         "Music"
+        ],
+        "inFavorites": false,
+        "name": "More Than We Ever Imagined (Live in Mexico City)",
+        "playParams": {
+         "id": "6796494276",
+         "kind": "album"
+        },
+        "releaseDate": "2026-08-07",
+        "trackCount": 21
+       }
+      },
+      {
+       "id": "1827507396",
+       "type": "albums",
+       "attributes": {
+        "artistName": "twenty one pilots",
+        "artwork": {
+         "bgColor": "311a18",
+         "height": 1425,
+         "textColor1": "f69584",
+         "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/1a/13/dc/1a13dc15-b07d-c302-4f04-080b67591628/075679609908.jpg/{w}x{h}bb.jpg",
+         "width": 1425
+        },
+        "editorialNotes": {
+         "short": "Placeholder editorial note."
+        },
+        "genreNames": [
+         "Alternative",
+         "Music"
+        ],
+        "inFavorites": false,
+        "name": "Breach",
+        "playParams": {
+         "id": "1827507396",
+         "kind": "album"
+        },
+        "releaseDate": "2025-09-12",
+        "trackCount": 13
+       }
+      }
+     ]
+    },
+    "latest-release": {
+     "attributes": {
+      "title": "Latest Release"
+     },
+     "data": [
+      {
+       "id": "6796494276",
+       "type": "albums",
+       "attributes": {
+        "artistName": "twenty one pilots",
+        "artwork": {
+         "bgColor": "9a2309",
+         "height": 1425,
+         "textColor1": "f9cfbc",
+         "url": "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/02/18/7f/02187fb6-d513-e035-f7cf-2384051b8cfc/075679587718.jpg/{w}x{h}bb.jpg",
+         "width": 1425
+        },
+        "editorialNotes": {
+         "short": "Placeholder editorial note."
+        },
+        "genreNames": [
+         "Alternative",
+         "Music"
+        ],
+        "inFavorites": false,
+        "name": "More Than We Ever Imagined (Live in Mexico City)",
+        "playParams": {
+         "id": "6796494276",
+         "kind": "album"
+        },
+        "releaseDate": "2026-08-07",
+        "trackCount": 21
+       }
+      }
+     ]
+    },
+    "similar-artists": {
+     "attributes": {
+      "title": "Similar Artists"
+     },
+     "data": [
+      {
+       "id": "80456331",
+       "type": "artists",
+       "attributes": {
+        "artwork": {
+         "bgColor": "99adbf",
+         "height": 1118,
+         "textColor1": "111014",
+         "url": "https://is1-ssl.mzstatic.com/image/thumb/Music122/v4/f0/ef/c3/f0efc32a-192a-a0d3-3346-4ac87f8b17b2/pr_source.png/{w}x{h}bb.jpg",
+         "width": 1118
+        },
+        "genreNames": [
+         "Alternative"
+        ],
+        "inFavorites": false,
+        "name": "Panic! At the Disco"
+       }
+      },
+      {
+       "id": "358714030",
+       "type": "artists",
+       "attributes": {
+        "artwork": {
+         "bgColor": "8b4442",
+         "height": 1486,
+         "textColor1": "f9c29d",
+         "url": "https://is1-ssl.mzstatic.com/image/thumb/AMCArtistImages221/v4/f2/7b/29/f27b29c0-49e6-4b40-e079-9a2163030444/0cd8f23b-d974-42e4-8fe7-1aaa533baf13_ami-identity-0dee3e31f20984eeb377fa8009444095-2024-04-03T19-26-12.960Z_cropped.png/{w}x{h}bb.jpg",
+         "width": 1486
+        },
+        "genreNames": [
+         "Alternative"
+        ],
+        "inFavorites": false,
+        "name": "Imagine Dragons"
+       }
+      }
+     ],
+     "next": "/v1/catalog/gb/artists/349736311/view/similar-artists?offset=10"
+    },
+    "singles": {
+     "attributes": {
+      "title": "Singles & EPs"
+     },
+     "data": [
+      {
+       "id": "1876977594",
+       "type": "albums",
+       "attributes": {
+        "artistName": "twenty one pilots",
+        "artwork": {
+         "bgColor": "bb2e1b",
+         "height": 1425,
+         "textColor1": "ecdcd7",
+         "url": "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/b7/d0/6d/b7d06d2d-2083-f417-b18d-f8ac862547b0/075679588968.jpg/{w}x{h}bb.jpg",
+         "width": 1425
+        },
+        "genreNames": [
+         "Alternative",
+         "Music"
+        ],
+        "inFavorites": false,
+        "name": "Drag Path - Single",
+        "playParams": {
+         "id": "1876977594",
+         "kind": "album"
+        },
+        "releaseDate": "2026-02-17",
+        "trackCount": 1
+       }
+      },
+      {
+       "id": "1819814404",
+       "type": "albums",
+       "attributes": {
+        "artistName": "twenty one pilots",
+        "artwork": {
+         "bgColor": "311a18",
+         "height": 1425,
+         "textColor1": "f69584",
+         "url": "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/d9/c4/b6/d9c4b6b9-2426-356e-3ebc-50a91efc0afe/075678595745.jpg/{w}x{h}bb.jpg",
+         "width": 1425
+        },
+        "genreNames": [
+         "Alternative",
+         "Music"
+        ],
+        "inFavorites": false,
+        "name": "The Contract - Single",
+        "playParams": {
+         "id": "1819814404",
+         "kind": "album"
+        },
+        "releaseDate": "2025-06-12",
+        "trackCount": 1
+       }
+      }
+     ],
+     "next": "/v1/catalog/gb/artists/349736311/view/singles?offset=10"
+    },
+    "top-songs": {
+     "attributes": {
+      "title": "Top Songs"
+     },
+     "data": [
+      {
+       "id": "1647324726",
+       "type": "songs",
+       "attributes": {
+        "albumName": "Spooky Season",
+        "artistName": "twenty one pilots",
+        "artwork": {
+         "bgColor": "201915",
+         "height": 1400,
+         "textColor1": "5cc8f9",
+         "url": "https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/35/fa/da/35fada8b-da37-2683-7483-c5545d9327fd/5059460159174.jpg/{w}x{h}bb.jpg",
+         "width": 1400
+        },
+        "discNumber": 1,
+        "durationInMillis": 202333,
+        "genreNames": [
+         "Alternative",
+         "Music"
+        ],
+        "inFavorites": false,
+        "name": "Stressed Out",
+        "playParams": {
+         "id": "1647324726",
+         "kind": "song"
+        },
+        "releaseDate": "2015-04-28",
+        "trackNumber": 54
+       }
+      },
+      {
+       "id": "974485805",
+       "type": "songs",
+       "attributes": {
+        "albumName": "Blurryface",
+        "artistName": "twenty one pilots",
+        "artwork": {
+         "bgColor": "202020",
+         "height": 1425,
+         "textColor1": "efefef",
+         "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/8e/e2/89/8ee28904-0821-610d-5011-a61845f62756/075679926951.jpg/{w}x{h}bb.jpg",
+         "width": 1425
+        },
+        "discNumber": 1,
+        "durationInMillis": 214505,
+        "genreNames": [
+         "Alternative",
+         "Music"
+        ],
+        "inFavorites": false,
+        "name": "Ride",
+        "playParams": {
+         "id": "974485805",
+         "kind": "song"
+        },
+        "releaseDate": "2015-05-12",
+        "trackNumber": 3
+       }
+      }
+     ],
+     "next": "/v1/catalog/gb/artists/349736311/view/top-songs?offset=10"
+    }
+   },
+   "meta": {
+    "views": {
+     "order": [
+      "latest-release",
+      "top-songs",
+      "full-albums",
+      "featured-playlists",
+      "singles",
+      "appears-on-albums",
+      "similar-artists"
+     ]
+    }
+   }
+  }
+ ]
+}

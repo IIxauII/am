@@ -1,0 +1,53 @@
+{
+ "next": "/v1/me/library/artists?offset=100",
+ "data": [
+  {
+   "id": "r.AAAA0001",
+   "type": "library-artists",
+   "attributes": {
+    "inFavorites": false,
+    "name": "Artist One"
+   },
+   "relationships": {
+    "catalog": {
+     "data": [
+      {
+       "id": "1000000101",
+       "type": "artists",
+       "attributes": {
+        "artwork": {
+         "bgColor": "040601",
+         "height": 3145,
+         "textColor1": "94c7db",
+         "url": "https://is1-ssl.mzstatic.com/image/thumb/AMCArtistImages211/v4/00/00/00/00000000-0000-0000-0000-000000000101/artist.png/{w}x{h}bb.jpg",
+         "width": 3145
+        },
+        "genreNames": [
+         "Hip-Hop/Rap"
+        ],
+        "inFavorites": false,
+        "name": "Artist One"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "r.AAAA0002",
+   "type": "library-artists",
+   "attributes": {
+    "inFavorites": true,
+    "name": "Artist Two"
+   },
+   "relationships": {
+    "catalog": {
+     "data": []
+    }
+   }
+  }
+ ],
+ "meta": {
+  "total": 2
+ }
+}

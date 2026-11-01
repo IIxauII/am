@@ -1,0 +1,26 @@
+{
+ "data": [
+  {
+   "id": "ra.u-AAAA0001",
+   "type": "stations",
+   "attributes": {
+    "artwork": {
+     "bgColor": "d32336",
+     "height": 1080,
+     "textColor1": "ffffff",
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Features126/v4/a0/81/ea/a081ea21-d1ab-5124-518b-ad93a3b1a921/c43370b7-3711-4413-8b85-3244554fe306.png/{w}x{h}sr.jpg",
+     "width": 4320
+    },
+    "isLive": false,
+    "name": "My Station",
+    "playParams": {
+     "format": "tracks",
+     "hasDrm": false,
+     "id": "ra.u-AAAA0001",
+     "kind": "radioStation",
+     "mediaType": 0
+    }
+   }
+  }
+ ]
+}

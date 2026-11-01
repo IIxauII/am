@@ -1,0 +1,58 @@
+{
+ "data": [
+  {
+   "id": "ra.978194965",
+   "type": "stations",
+   "attributes": {
+    "artwork": {
+     "bgColor": "f6f6f6",
+     "height": 1080,
+     "textColor1": "160105",
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Features221/v4/fd/45/5b/fd455ba0-4a4d-854b-fc65-6d48f70be2f4/7da7d278-56c7-42a7-a801-d2193b71770a.png/{w}x{h}sr.jpg",
+     "width": 4320
+    },
+    "editorialNotes": {
+     "short": "Live now"
+    },
+    "isLive": true,
+    "name": "Apple Music 1",
+    "playParams": {
+     "format": "stream",
+     "hasDrm": true,
+     "id": "ra.978194965",
+     "kind": "radioStation",
+     "mediaType": 0,
+     "stationHash": "CgkIBRoFlaS40gMQBA"
+    },
+    "stationProviderName": "Apple Music"
+   }
+  },
+  {
+   "id": "ra.1498155548",
+   "type": "stations",
+   "attributes": {
+    "artwork": {
+     "bgColor": "f6f6f6",
+     "height": 1080,
+     "textColor1": "060816",
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Features221/v4/27/b7/ec/27b7eca8-5bb2-3c46-ca1e-be2877a3cc91/feb0dc99-412b-4688-b8d6-c0fa07059558.png/{w}x{h}sr.jpg",
+     "width": 4320
+    },
+    "editorialNotes": {
+     "short": "Live radio"
+    },
+    "isLive": true,
+    "name": "Apple Music Hits",
+    "playParams": {
+     "format": "stream",
+     "hasDrm": true,
+     "id": "ra.1498155548",
+     "kind": "radioStation",
+     "mediaType": 0,
+     "stationHash": "CgkIBRoFnJSwygUQBA"
+    },
+    "stationProviderName": "Apple Music"
+   }
+  }
+ ]
+}

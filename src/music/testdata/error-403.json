@@ -1,0 +1,11 @@
+{
+ "errors": [
+  {
+   "id": "GKZH43KBPVHVMGYN2OHWLMBFHE",
+   "title": "Forbidden",
+   "detail": "Invalid authentication",
+   "status": "403",
+   "code": "40300"
+  }
+ ]
+}

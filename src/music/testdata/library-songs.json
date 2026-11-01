@@ -1,0 +1,64 @@
+{
+ "next": "/v1/me/library/songs?offset=100&sort=-dateAdded",
+ "data": [
+  {
+   "id": "i.AAAA0001",
+   "type": "library-songs",
+   "attributes": {
+    "albumName": "Album One",
+    "artistName": "Artist One",
+    "artwork": {
+     "height": 1200,
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/00/00/00/00000000-0000-0000-0000-000000000001/cover.jpg/{w}x{h}bb.jpg",
+     "width": 1200
+    },
+    "discNumber": 1,
+    "durationInMillis": 181000,
+    "genreNames": [
+     "Alternative"
+    ],
+    "inFavorites": true,
+    "name": "First Song",
+    "playParams": {
+     "id": "i.AAAA0001",
+     "isLibrary": true,
+     "kind": "song",
+     "catalogId": "1000000001"
+    },
+    "releaseDate": "2021-05-21",
+    "trackNumber": 3,
+    "contentRating": "explicit"
+   }
+  },
+  {
+   "id": "i.AAAA0002",
+   "type": "library-songs",
+   "attributes": {
+    "albumName": "Home Recordings",
+    "artistName": "Artist Two",
+    "artwork": {
+     "height": 1200,
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/00/00/00/00000000-0000-0000-0000-000000000001/cover.jpg/{w}x{h}bb.jpg",
+     "width": 1200
+    },
+    "discNumber": 1,
+    "durationInMillis": 182000,
+    "genreNames": [
+     "Alternative"
+    ],
+    "inFavorites": false,
+    "name": "Uploaded Song",
+    "playParams": {
+     "id": "i.AAAA0002",
+     "isLibrary": true,
+     "kind": "song"
+    },
+    "releaseDate": "2021-05-21",
+    "trackNumber": 1
+   }
+  }
+ ],
+ "meta": {
+  "total": 250
+ }
+}

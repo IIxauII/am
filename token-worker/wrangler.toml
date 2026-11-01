@@ -1,0 +1,7 @@
+# The shared developer token service (SETUP.md section 6), at
+# https://am-token.xauyxau.workers.dev/token. Its settings (MUSICKIT_KEY, TEAM_ID, KEY_ID, ENABLED)
+# are secrets, put with `wrangler secret put`, never in this file.
+name = "am-token"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true

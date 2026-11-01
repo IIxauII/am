@@ -1,0 +1,24 @@
+{
+ "results": {
+  "suggestions": [
+   {
+    "kind": "terms",
+    "searchTerm": "twenty one pilots",
+    "displayTerm": "twenty one pilots",
+    "source": "7"
+   },
+   {
+    "kind": "terms",
+    "searchTerm": "twenty one pilots the line",
+    "displayTerm": "twenty one pilots the line",
+    "source": "7"
+   },
+   {
+    "kind": "terms",
+    "searchTerm": "twenty one pilots car radio",
+    "displayTerm": "twenty one pilots car radio",
+    "source": "7"
+   }
+  ]
+ }
+}

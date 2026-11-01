@@ -1,0 +1,64 @@
+{
+ "next": "/v1/me/library/playlists/p.AAAA0002/tracks?offset=100",
+ "data": [
+  {
+   "id": "i.AAAA0021",
+   "type": "library-songs",
+   "attributes": {
+    "albumName": "Album Two",
+    "artistName": "Artist Two",
+    "artwork": {
+     "height": 1200,
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/00/00/00/00000000-0000-0000-0000-000000000001/cover.jpg/{w}x{h}bb.jpg",
+     "width": 1200
+    },
+    "discNumber": 1,
+    "durationInMillis": 201000,
+    "genreNames": [
+     "Alternative"
+    ],
+    "inFavorites": true,
+    "name": "Zebra",
+    "playParams": {
+     "id": "i.AAAA0021",
+     "isLibrary": true,
+     "kind": "song",
+     "catalogId": "1000000021"
+    },
+    "releaseDate": "2021-05-21",
+    "trackNumber": 9
+   }
+  },
+  {
+   "id": "i.AAAA0022",
+   "type": "library-songs",
+   "attributes": {
+    "albumName": "Album One",
+    "artistName": "Artist One",
+    "artwork": {
+     "height": 1200,
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/00/00/00/00000000-0000-0000-0000-000000000001/cover.jpg/{w}x{h}bb.jpg",
+     "width": 1200
+    },
+    "discNumber": 1,
+    "durationInMillis": 202000,
+    "genreNames": [
+     "Alternative"
+    ],
+    "inFavorites": true,
+    "name": "Apple",
+    "playParams": {
+     "id": "i.AAAA0022",
+     "isLibrary": true,
+     "kind": "song",
+     "catalogId": "1000000022"
+    },
+    "releaseDate": "2021-05-21",
+    "trackNumber": 2
+   }
+  }
+ ],
+ "meta": {
+  "total": 414
+ }
+}

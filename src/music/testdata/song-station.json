@@ -1,0 +1,27 @@
+{
+ "data": [
+  {
+   "id": "ra.1561837008",
+   "type": "stations",
+   "attributes": {
+    "artwork": {
+     "bgColor": "699195",
+     "height": 1425,
+     "textColor1": "0d1212",
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/24/f2/15/24f215e3-52cc-078b-d799-d58d606feddd/075679786210.jpg/{w}x{h}AM.RSSB03.jpg",
+     "width": 1425
+    },
+    "isLive": false,
+    "name": "Shy Away Station",
+    "playParams": {
+     "format": "tracks",
+     "hasDrm": false,
+     "id": "ra.1561837008",
+     "kind": "radioStation",
+     "mediaType": 0,
+     "stationHash": "CgkIARoF0Pve6AUQAQ"
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,14 @@
+{
+ "errors": [
+  {
+   "id": "2UEON2DV7DG2GKQSKTHPWKRBKY",
+   "title": "Invalid Parameter Value",
+   "detail": "Value must be an integer less than or equal to 25, but was: 26",
+   "status": "400",
+   "code": "40005",
+   "source": {
+    "parameter": "limit"
+   }
+  }
+ ]
+}

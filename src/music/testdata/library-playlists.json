@@ -1,0 +1,93 @@
+{
+ "next": "/v1/me/library/playlists?offset=100",
+ "data": [
+  {
+   "id": "p.AAAA0001",
+   "type": "library-playlists",
+   "attributes": {
+    "canEdit": true,
+    "hasCatalog": false,
+    "inFavorites": false,
+    "name": "Road Trip",
+    "playParams": {
+     "id": "p.AAAA0001",
+     "isLibrary": true,
+     "kind": "playlist"
+    },
+    "artwork": {
+     "height": 1200,
+     "width": 1200,
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/gen/1200x1200AM.PDCXS11.jpg?c1=EEEEEE&c2=BBBBBB&t=Um9hZCBUcmlw&tc=000000&vkey=1"
+    },
+    "description": {
+     "standard": ""
+    }
+   }
+  },
+  {
+   "id": "p.AAAA0002",
+   "type": "library-playlists",
+   "attributes": {
+    "canEdit": false,
+    "hasCatalog": false,
+    "inFavorites": false,
+    "name": "Favourite Songs",
+    "playParams": {
+     "id": "p.AAAA0002",
+     "isLibrary": true,
+     "kind": "playlist"
+    },
+    "artwork": {
+     "height": 1080,
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Features116/v4/e3/6e/33/e36e33de-da6c-71e8-dc2e-fae168c924ba/47a3c06a-ab88-4d36-a040-41d730e71d45.png/{w}x{h}cc.jpg",
+     "width": 1080
+    },
+    "tags": [
+     "favorited"
+    ]
+   }
+  },
+  {
+   "id": "p.AAAA0003",
+   "type": "library-playlists",
+   "attributes": {
+    "canEdit": false,
+    "hasCatalog": false,
+    "inFavorites": false,
+    "name": "Purchased",
+    "playParams": {
+     "id": "p.AAAA0003",
+     "isLibrary": true,
+     "kind": "playlist"
+    }
+   }
+  },
+  {
+   "id": "p.AAAA0004",
+   "type": "library-playlists",
+   "attributes": {
+    "canEdit": true,
+    "hasCatalog": true,
+    "inFavorites": true,
+    "name": "Shared Mix",
+    "playParams": {
+     "id": "p.AAAA0004",
+     "isLibrary": true,
+     "kind": "playlist",
+     "globalId": "pl.u-AAAA0004"
+    },
+    "artwork": {
+     "height": 1200,
+     "width": 1200,
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/gen/1200x1200AM.PDCXS11.jpg?c1=EEEEEE&c2=BBBBBB&t=Um9hZCBUcmlw&tc=000000&vkey=1"
+    },
+    "description": {
+     "standard": "Songs for the <b>weekend</b> &amp; after."
+    }
+   }
+  }
+ ],
+ "meta": {
+  "total": 104
+ }
+}

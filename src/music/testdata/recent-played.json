@@ -1,0 +1,85 @@
+{
+ "next": "/v1/me/recent/played?offset=10",
+ "data": [
+  {
+   "id": "ra.1000000203",
+   "type": "stations",
+   "attributes": {
+    "artwork": {
+     "bgColor": "f6f6f6",
+     "height": 1080,
+     "textColor1": "160105",
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Features221/v4/fd/45/5b/fd455ba0-4a4d-854b-fc65-6d48f70be2f4/7da7d278-56c7-42a7-a801-d2193b71770a.png/{w}x{h}sr.jpg",
+     "width": 4320
+    },
+    "isLive": false,
+    "name": "Station Three",
+    "playParams": {
+     "format": "tracks",
+     "hasDrm": false,
+     "id": "ra.1000000203",
+     "kind": "radioStation"
+    }
+   }
+  },
+  {
+   "id": "1000000401",
+   "type": "albums",
+   "attributes": {
+    "artistName": "Placeholder Artist",
+    "artwork": {
+     "bgColor": "114a21",
+     "height": 3000,
+     "textColor1": "b4f4c3",
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/00/00/00/00000000-0000-0000-0000-000000000001/cover.jpg/{w}x{h}bb.jpg",
+     "width": 3000
+    },
+    "contentRating": "explicit",
+    "editorialNotes": {
+     "short": "Placeholder editorial note."
+    },
+    "genreNames": [
+     "Hip-Hop/Rap",
+     "Music"
+    ],
+    "name": "Placeholder Album",
+    "playParams": {
+     "id": "1000000401",
+     "kind": "album"
+    },
+    "releaseDate": "2026-10-16",
+    "trackCount": 16
+   }
+  },
+  {
+   "id": "p.AAAA0001",
+   "type": "library-playlists",
+   "attributes": {
+    "canEdit": true,
+    "hasCatalog": false,
+    "inFavorites": false,
+    "name": "Road Trip",
+    "playParams": {
+     "id": "p.AAAA0001",
+     "isLibrary": true,
+     "kind": "playlist"
+    },
+    "artwork": {
+     "height": 1200,
+     "width": 1200,
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/gen/1200x1200AM.PDCXS11.jpg?c1=EEEEEE&c2=BBBBBB&t=Um9hZCBUcmlw&tc=000000&vkey=1"
+    },
+    "description": {
+     "standard": ""
+    }
+   }
+  },
+  {
+   "id": "1000000301",
+   "type": "genres",
+   "attributes": {
+    "name": "Rock"
+   }
+  }
+ ]
+}

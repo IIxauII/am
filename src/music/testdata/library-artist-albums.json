@@ -1,0 +1,31 @@
+{
+ "data": [
+  {
+   "id": "l.AAAA0001",
+   "type": "library-albums",
+   "attributes": {
+    "artistName": "Artist One",
+    "artwork": {
+     "height": 1200,
+     "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/00/00/00/00000000-0000-0000-0000-000000000001/cover.jpg/{w}x{h}bb.jpg",
+     "width": 1200
+    },
+    "genreNames": [
+     "Alternative"
+    ],
+    "inFavorites": false,
+    "name": "Album One",
+    "playParams": {
+     "id": "l.AAAA0001",
+     "isLibrary": true,
+     "kind": "album"
+    },
+    "releaseDate": "2021-05-21",
+    "trackCount": 6
+   }
+  }
+ ],
+ "meta": {
+  "total": 1
+ }
+}

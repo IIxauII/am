@@ -1,0 +1,227 @@
+{
+ "results": {
+  "topResults": {
+   "data": [
+    {
+     "id": "349736311",
+     "type": "artists",
+     "attributes": {
+      "artwork": {
+       "bgColor": "000000",
+       "height": 3000,
+       "textColor1": "fa4234",
+       "url": "https://is1-ssl.mzstatic.com/image/thumb/AMCArtistImages211/v4/ca/cd/50/cacd509c-b0d0-9767-afed-2568bb48bb80/ami-identity-c9ba08a71090ad5f6094375f4aa48f32-2025-05-21T14-28-34.785Z_cropped.png/{w}x{h}bb.jpg",
+       "width": 3000
+      },
+      "genreNames": [
+       "Alternative"
+      ],
+      "name": "twenty one pilots"
+     }
+    },
+    {
+     "id": "974485474",
+     "type": "songs",
+     "attributes": {
+      "albumName": "Blurryface",
+      "artistName": "twenty one pilots",
+      "artwork": {
+       "bgColor": "202020",
+       "height": 1425,
+       "textColor1": "efefef",
+       "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/8e/e2/89/8ee28904-0821-610d-5011-a61845f62756/075679926951.jpg/{w}x{h}bb.jpg",
+       "width": 1425
+      },
+      "discNumber": 1,
+      "durationInMillis": 202335,
+      "genreNames": [
+       "Alternative",
+       "Music"
+      ],
+      "name": "Stressed Out",
+      "playParams": {
+       "id": "974485474",
+       "kind": "song"
+      },
+      "releaseDate": "2015-04-28",
+      "trackNumber": 2
+     }
+    }
+   ]
+  },
+  "artists": {
+   "data": [
+    {
+     "id": "349736311",
+     "type": "artists",
+     "attributes": {
+      "artwork": {
+       "bgColor": "000000",
+       "height": 3000,
+       "textColor1": "fa4234",
+       "url": "https://is1-ssl.mzstatic.com/image/thumb/AMCArtistImages211/v4/ca/cd/50/cacd509c-b0d0-9767-afed-2568bb48bb80/ami-identity-c9ba08a71090ad5f6094375f4aa48f32-2025-05-21T14-28-34.785Z_cropped.png/{w}x{h}bb.jpg",
+       "width": 3000
+      },
+      "genreNames": [
+       "Alternative"
+      ],
+      "name": "twenty one pilots"
+     }
+    }
+   ]
+  },
+  "songs": {
+   "data": [
+    {
+     "id": "974485474",
+     "type": "songs",
+     "attributes": {
+      "albumName": "Blurryface",
+      "artistName": "twenty one pilots",
+      "artwork": {
+       "bgColor": "202020",
+       "height": 1425,
+       "textColor1": "efefef",
+       "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/8e/e2/89/8ee28904-0821-610d-5011-a61845f62756/075679926951.jpg/{w}x{h}bb.jpg",
+       "width": 1425
+      },
+      "discNumber": 1,
+      "durationInMillis": 202335,
+      "genreNames": [
+       "Alternative",
+       "Music"
+      ],
+      "name": "Stressed Out",
+      "playParams": {
+       "id": "974485474",
+       "kind": "song"
+      },
+      "releaseDate": "2015-04-28",
+      "trackNumber": 2
+     }
+    },
+    {
+     "id": "1125281487",
+     "type": "songs",
+     "attributes": {
+      "albumName": "Suicide Squad: The Album",
+      "artistName": "twenty one pilots",
+      "artwork": {
+       "bgColor": "9cda9c",
+       "height": 1425,
+       "textColor1": "1c0216",
+       "url": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/2f/76/c0/2f76c0c7-5aaf-eb97-2002-f40c9ecde722/075679910486.jpg/{w}x{h}bb.jpg",
+       "width": 1425
+      },
+      "discNumber": 1,
+      "durationInMillis": 195920,
+      "genreNames": [
+       "Alternative",
+       "Music"
+      ],
+      "name": "Heathens",
+      "playParams": {
+       "id": "1125281487",
+       "kind": "song"
+      },
+      "releaseDate": "2016-06-16",
+      "trackNumber": 3
+     }
+    }
+   ],
+   "next": "/v1/catalog/gb/search?offset=25&term=twenty+one+pilots&types=songs"
+  },
+  "albums": {
+   "data": [
+    {
+     "id": "1827507396",
+     "type": "albums",
+     "attributes": {
+      "artistName": "twenty one pilots",
+      "artwork": {
+       "bgColor": "311a18",
+       "height": 1425,
+       "textColor1": "f69584",
+       "url": "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/1a/13/dc/1a13dc15-b07d-c302-4f04-080b67591628/075679609908.jpg/{w}x{h}bb.jpg",
+       "width": 1425
+      },
+      "editorialNotes": {
+       "short": "Placeholder editorial note."
+      },
+      "genreNames": [
+       "Alternative",
+       "Music"
+      ],
+      "name": "Breach",
+      "playParams": {
+       "id": "1827507396",
+       "kind": "album"
+      },
+      "releaseDate": "2025-09-12",
+      "trackCount": 13
+     }
+    }
+   ]
+  },
+  "stations": {
+   "data": [
+    {
+     "id": "ra.985494544",
+     "type": "stations",
+     "attributes": {
+      "artwork": {
+       "bgColor": "5b7bdc",
+       "height": 1080,
+       "textColor1": "ffffff",
+       "url": "https://is1-ssl.mzstatic.com/image/thumb/Features/v4/29/22/f4/2922f439-3ce2-1c7e-b36c-b55d1e2f8346/48974eea-1efc-43f6-b285-4f37fb8ce64a.png/{w}x{h}sr.jpg",
+       "width": 4320
+      },
+      "editorialNotes": {
+       "short": "Apple Music Station"
+      },
+      "isLive": false,
+      "name": "Classic Hip-Hop Station",
+      "playParams": {
+       "format": "tracks",
+       "hasDrm": false,
+       "id": "ra.985494544",
+       "kind": "radioStation",
+       "mediaType": 0,
+       "stationHash": "CgkIBBoFkOj11QMQAg"
+      }
+     }
+    }
+   ]
+  },
+  "record-labels": {
+   "data": [
+    {
+     "id": "1548562904",
+     "type": "record-labels",
+     "attributes": {
+      "artwork": {
+       "bgColor": "ffffff",
+       "height": 1080,
+       "textColor1": "391f0f",
+       "url": "https://is1-ssl.mzstatic.com/image/thumb/Features221/v4/87/6e/95/876e95d1-414f-a85b-5958-b0b26c34d0c0/657275a6-ccd8-4dae-914b-a5b5162d55c7.png/{w}x{h}bb.jpg",
+       "width": 1080
+      },
+      "name": "Chillhop Music"
+     }
+    }
+   ]
+  }
+ },
+ "meta": {
+  "results": {
+   "order": [
+    "topResults",
+    "artists",
+    "songs",
+    "albums",
+    "record-labels",
+    "stations"
+   ]
+  }
+ }
+}

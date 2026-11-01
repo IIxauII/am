@@ -1,0 +1,21 @@
+node_modules/
+# wrangler's local state (deploys, dev)
+token-worker/.wrangler/
+# Secrets live in ~/.config/am; these patterns are a safety net in case one gets copied here.
+*.p8
+*.jwt
+music-user-token
+.env
+env
+chrome-profile/
+firefox-profile/
+
+# Zig build output
+.zig-cache/
+zig-out/
+
+# Local code-review receipts, keyed by commit; never pushed.
+.review-receipts/
+
+# Agent worktrees and local agent settings
+.claude/

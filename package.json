@@ -1,0 +1,17 @@
+{
+  "name": "am-dev",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Node dev tooling for am: tests for the engine page (poc/web, embedded in the am binary) and the token service, plus the original Node prototype",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "am": "node poc/am.mjs",
+    "test:page": "node poc/web/app.test.mjs",
+    "test:worker": "node --test token-worker/test/",
+    "check:token-service": "node token-worker/live-check.mjs"
+  }
+}

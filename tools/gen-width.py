@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Generate src/tui/width_table.zig from the Unicode Character Database.
+
+usage: python3 -I tools/gen-width.py [--version 17.0.0] [--cache DIR] [--out PATH]
+
+Downloads EastAsianWidth.txt, emoji/emoji-data.txt and extracted/DerivedGeneralCategory.txt
+for the given version from unicode.org into DIR (a fresh temporary directory by default),
+then writes the range tables that src/tui/width.zig searches.
+
+Rules (one terminal column is the default):
+- 0: general categories Mn, Me, Cf and Cc, and Hangul Jamo vowels and trailing consonants
+  (U+1160..U+11FF, U+D7B0..U+D7FF), which join the leading consonant before them.
+  U+00AD SOFT HYPHEN stays 1, as most terminals draw it.
+- 2: East_Asian_Width W or F, and Emoji_Presentation=Yes.
+- 0 wins over 2 (e.g. U+3099, a wide combining mark).
+`text_emoji` lists Emoji=Yes code points that are not wide: VS16 (U+FE0F) after one of them
+asks for emoji presentation, which terminals draw two columns wide.
+"""
+import argparse
+import os
+import sys
+import tempfile
+import urllib.request
+
+FILES = {
+    "eaw": "ucd/EastAsianWidth.txt",
+    "emoji": "ucd/emoji/emoji-data.txt",
+    "gc": "ucd/extracted/DerivedGeneralCategory.txt",
+}
+MAX = 0x10FFFF
+
+
+def fetch(version, cache):
+    paths = {}
+    for key, rel in FILES.items():
+        path = os.path.join(cache, os.path.basename(rel))
+        if not os.path.exists(path):
+            url = f"https://www.unicode.org/Public/{version}/{rel}"
+            with urllib.request.urlopen(url, timeout=60) as r, open(path, "wb") as f:
+                f.write(r.read())
+        paths[key] = path
+    return paths
+
+
+def records(path):
+    """Yields (lo, hi, value, missing) per data line; `missing` marks `# @missing:` defaults."""
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            missing = line.startswith("# @missing:")
+            if missing:
+                line = line[len("# @missing:"):]
+            else:
+                line = line.split("#", 1)[0]
+            if not line.strip():
+                continue
+            fields = [x.strip() for x in line.split(";")]
+            cps = fields[0]
+            lo, _, hi = cps.partition("..")
+            lo = int(lo, 16)
+            hi = int(hi, 16) if hi else lo
+            yield lo, hi, fields[1], missing
+
+
+def check_version(path, version):
+    with open(path, encoding="utf-8") as f:
+        head = f.read(400)
+    major_minor = ".".join(version.split(".")[:2])
+    if version not in head and f"Version: {major_minor}" not in head:
+        sys.exit(f"{path}: not version {version}")
+
+
+def ranges(table, wanted):
+    out = []
+    lo = None
+    for cp in range(MAX + 2):
+        v = table[cp] if cp <= MAX else None
+        if v == wanted and lo is None:
+            lo = cp
+        elif v != wanted and lo is not None:
+            out.append((lo, cp - 1))
+            lo = None
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--version", default="17.0.0")
+    ap.add_argument("--cache")
+    ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "src", "tui", "width_table.zig"))
+    args = ap.parse_args()
+    cache = args.cache or tempfile.mkdtemp(prefix="ucd-")
+    os.makedirs(cache, exist_ok=True)
+    paths = fetch(args.version, cache)
+    for p in paths.values():
+        check_version(p, args.version)
+
+    width = bytearray([1]) * (MAX + 1)
+
+    eaw = ["N"] * (MAX + 1)
+    for missing_pass in (True, False):
+        for lo, hi, v, missing in records(paths["eaw"]):
+            if missing == missing_pass:
+                eaw[lo:hi + 1] = [v] * (hi - lo + 1)
+    for cp in range(MAX + 1):
+        if eaw[cp] in ("W", "F"):
+            width[cp] = 2
+
+    emoji = bytearray(MAX + 1)
+    for lo, hi, v, missing in records(paths["emoji"]):
+        if missing:
+            continue
+        if v == "Emoji_Presentation":
+            for cp in range(lo, hi + 1):
+                width[cp] = 2
+        elif v == "Emoji":
+            for cp in range(lo, hi + 1):
+                emoji[cp] = 1
+
+    for lo, hi, v, missing in records(paths["gc"]):
+        if not missing and v in ("Mn", "Me", "Cf", "Cc"):
+            for cp in range(lo, hi + 1):
+                width[cp] = 0
+    for lo, hi in ((0x1160, 0x11FF), (0xD7B0, 0xD7FF)):
+        for cp in range(lo, hi + 1):
+            width[cp] = 0
+    width[0x00AD] = 1
+
+    text_emoji = bytearray(MAX + 1)
+    for cp in range(MAX + 1):
+        if emoji[cp] and width[cp] == 1:
+            text_emoji[cp] = 1
+
+    zero = ranges(width, 0)
+    wide = ranges(width, 2)
+    text = ranges(text_emoji, 1)
+
+    def emit(name, doc, rs):
+        lines = [f"/// {doc}", f"pub const {name} = [_]Range{{"]
+        for lo, hi in rs:
+            lines.append(f"    .{{ .lo = 0x{lo:04X}, .hi = 0x{hi:04X} }},")
+        lines.append("};")
+        return "\n".join(lines)
+
+    src = "\n\n".join([
+        "\n".join([
+            f"//! Generated by tools/gen-width.py from Unicode {args.version} (EastAsianWidth.txt,",
+            "//! emoji-data.txt, DerivedGeneralCategory.txt). Do not edit; rerun the generator.",
+            "",
+            "/// An inclusive code point range. The tables are sorted and do not overlap.",
+            "pub const Range = struct { lo: u21, hi: u21 };",
+            "",
+            f'pub const unicode_version = "{args.version}";',
+        ]),
+        emit("zero_width", "Code points that take no column of their own.", zero),
+        emit("wide", "Code points that take two columns.", wide),
+        emit("text_emoji", "Emoji drawn one column wide unless VS16 follows.", text),
+    ]) + "\n"
+    with open(args.out, "w", encoding="utf-8") as f:
+        f.write(src)
+    print(f"{args.out}: {len(zero)} zero, {len(wide)} wide, {len(text)} text-emoji ranges (cache {cache})")
+
+
+if __name__ == "__main__":
+    main()

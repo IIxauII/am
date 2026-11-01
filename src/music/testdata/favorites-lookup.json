@@ -1,0 +1,18 @@
+{
+ "data": [
+  {
+   "id": "1561837008",
+   "type": "songs",
+   "attributes": {
+    "inFavorites": false
+   }
+  },
+  {
+   "id": "1117028240",
+   "type": "songs",
+   "attributes": {
+    "inFavorites": true
+   }
+  }
+ ]
+}
