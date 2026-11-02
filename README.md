@@ -1,8 +1,8 @@
 # am
 
-Apple Music in the terminal: a full-screen player and a command line. macOS and Linux.
+Apple Music in the terminal.
 
-Needs an Apple Music subscription and Firefox or Google Chrome.
+Playback via headless Firefox or Google Chrome.
 
 ## Build
 
