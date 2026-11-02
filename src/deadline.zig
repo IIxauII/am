@@ -75,7 +75,7 @@ test "withTimeout: the result when it comes in time, null when it doesn't" {
 
 /// A clock for tests that never waits, so the scheduler can't change what a test sees: a sleep
 /// moves it on by what was asked plus `late` (a busy machine waking late) and is noted. Every
-/// other `Io` call fails, as in `Io.failing`.
+/// other `Io` call is `Io.failing`'s: it fails, or for some, like `recancel`, panics.
 const FakeClock = struct {
     at: Io.Timestamp = .zero,
     late: Io.Duration = .zero,
@@ -142,6 +142,8 @@ test "a late wake, as on a busy machine, shortens the next sleep and adds no pol
 }
 
 test "a passed deadline doesn't sleep at all" {
-    const deadline: Deadline = .after(testing.io, .zero);
+    var clock: FakeClock = .{};
+    const deadline: Deadline = .after(clock.io(), .zero);
     try testing.expect(!try deadline.sleep(.fromSeconds(10)));
+    try testing.expectEqual(@as(usize, 0), clock.slept().len);
 }

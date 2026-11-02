@@ -36,8 +36,10 @@ pub fn forEachProcess(gpa: Allocator, io: Io, context: anytype, comptime visit: 
 }
 
 /// Whether `err`, from reading one process's `/proc` files, means only that this process can't
-/// be read: it exited (`FileNotFound`; `Unexpected` is the ESRCH of a read while it exits) or
-/// isn't ours. Any other error (`Canceled`, out of file descriptors) is not about the process.
+/// be read: it exited (`FileNotFound`) or isn't ours. `Unexpected` counts too: std gives it for
+/// the ESRCH of a read once the process is gone, and for any errno std doesn't name, which leaves
+/// the process just as unread (Debug builds also print std's trace for it). Any other error
+/// (`Canceled`, out of file descriptors) is not about the process.
 fn processUnreadable(err: anytype) bool {
     return switch (err) {
         error.FileNotFound, error.AccessDenied, error.PermissionDenied, error.Unexpected => true,
@@ -68,10 +70,8 @@ pub fn processGroupOf(pid: pid_t) ?pid_t {
 // ---- Reading /proc ----
 
 /// A `/proc` file, read as a stream. Every `/proc` read here goes through it: `/proc` files
-/// report size 0, and std's whole-file reads go by that (`Dir.readFileAlloc` reads nothing) or
-/// fill a buffer without saying whether there was more (`Dir.readFile`).
+/// report size 0, and `Dir.readFileAlloc` goes by that size and reads nothing.
 const ProcFile = struct {
-    file: Io.File,
     reader: Io.File.Reader,
 
     const Error = Io.File.OpenError || Io.File.Reader.Error;
@@ -79,11 +79,11 @@ const ProcFile = struct {
     /// `buffer` is the reader's; it may be empty.
     fn open(io: Io, path: []const u8, buffer: []u8) Io.File.OpenError!ProcFile {
         const file = try Io.Dir.cwd().openFile(io, path, .{});
-        return .{ .file = file, .reader = file.readerStreaming(io, buffer) };
+        return .{ .reader = file.readerStreaming(io, buffer) };
     }
 
     fn close(f: *ProcFile, io: Io) void {
-        f.file.close(io);
+        f.reader.file.close(io);
     }
 
     /// The error behind the reader's `error.ReadFailed`.
@@ -165,12 +165,11 @@ pub fn processTree(gpa: Allocator, io: Io, pgid: pid_t) platform.ProcessTreeErro
         return error.CantListProcesses;
     }) |entry| {
         const pid = std.fmt.parseInt(pid_t, entry.name, 10) catch continue;
-        const read = readStat(io, pid) catch |e| {
+        const stat = readStat(io, pid) catch |e| {
             if (processUnreadable(e)) continue;
             keepCancel(io, e);
             return error.CantListProcesses;
-        };
-        const stat = read orelse continue;
+        } orelse continue;
         try entries.append(gpa, .{ .pid = pid, .ppid = stat.ppid, .pgid = stat.pgrp });
     }
     return posix_backend.treeOf(gpa, entries.items, pgid);
