@@ -14,7 +14,8 @@ export function prTitleError(title) {
   if (conventionalTitle.test(title) || githubRevertTitle.test(title)) return null
   return `PR title "${title}" isn't a conventional commit: <type>[(scope)][!]: <description>.
   feat: …                       releases a minor version
-  fix: …, perf: …               releases a patch version, as does a revert ("This reverts commit <sha>.")
+  fix: …, perf: …               releases a patch version
+  revert: …, Revert "…"         releases a patch version if it says "This reverts commit <sha>."
   <type>!: … (feat!:, fix!: …)  releases a major version
   ${types.filter((t) => !['feat', 'fix', 'perf', 'revert'].includes(t)).join(': …, ')}: …  release nothing`
 }

@@ -20,13 +20,17 @@ PR's title, which decides the release:
 | `feat!: …`, `fix!: …` (any type with `!`), or a `BREAKING CHANGE:` footer | major: 0.1.0 → 1.0.0 |
 | `docs:`, `chore:`, `ci:`, `build:`, `test:`, `refactor:`, `style:` | none |
 
-A scope is fine: `fix(daemon): …`. A revert is a PR from GitHub's Revert button (`Revert "…"`), or
-any whose commits say "This reverts commit <sha>." (as `git revert` writes); a `revert:` title
-alone releases nothing. A breaking change takes 0.x to 1.0.0, not to the next 0.x.
+A scope is fine: `fix(daemon): …`. A breaking change takes 0.x to 1.0.0, not to the next 0.x.
+
+A revert releases a patch when its title starts with `Revert` or `revert:` and its message says
+"This reverts commit <sha>." (as GitHub's Revert button and `git revert` write it): a PR from the
+Revert button (`Revert "…"`), or a `revert: …` PR whose commits came from `git revert`. A `revert:`
+title without that line releases nothing, and a `git revert` commit under any other title releases
+what that title does.
 
 The squash commit's body lists the branch's commits, so a `BREAKING CHANGE:` footer in any of them
-releases a major too, whatever the title. GitHub's merge dialog shows that body: check it before a
-`fix:` or `feat:` merge.
+releases a major too, whatever the title, `chore:` and `docs:` included. GitHub's merge dialog
+shows that body: check it before every merge.
 
 On the push to `main`, the `semantic-release` workflow (`.github/workflows/semantic-release.yml`,
 configured in `release.config.mjs`) reads every commit since the last `v*` tag. If one of them

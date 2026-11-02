@@ -1,7 +1,7 @@
 # On every push to main, semantic-release reads the commits since the last v* tag
-# (release.config.mjs). If one of them releases (docs/releasing.md has which do), a release commit
-# sets build.zig.zon's .version, the v<version> tag goes on it, and release.yml builds the binaries
-# and publishes the GitHub Release. Runbook: docs/releasing.md.
+# (release.config.mjs). If one of them releases, a release commit sets build.zig.zon's .version,
+# the v<version> tag goes on it, and release.yml builds the binaries and publishes the GitHub
+# Release. Runbook: docs/releasing.md.
 name: semantic-release
 
 on:
