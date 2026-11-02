@@ -3,7 +3,7 @@
 Apple Music in the terminal.
 
 Playback via headless Firefox or Google Chrome, so one of them must be installed (on macOS:
-`brew install --cask firefox`; on Linux, from your distribution).
+`brew install --cask firefox`).
 
 ## Install
 
@@ -27,9 +27,8 @@ zig build -Doptimize=ReleaseSafe    # → zig-out/bin/am
 
 ## Platforms
 
-- **macOS:** tested end to end.
-- **Linux:** builds and passes the tests, but playback is not yet checked.
-- **Windows:** no release yet.
+- **macOS**
+- **Linux**
 
 ## Use
 
