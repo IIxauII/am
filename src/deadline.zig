@@ -75,7 +75,7 @@ test "withTimeout: the result when it comes in time, null when it doesn't" {
 
 /// A clock for tests that never waits, so the scheduler can't change what a test sees: a sleep
 /// moves it on by what was asked plus `late` (a busy machine waking late) and is noted. Every
-/// other `Io` call is `Io.failing`'s: it fails, or for some, like `recancel`, panics.
+/// other `Io` call is `Io.failing`'s.
 const FakeClock = struct {
     at: Io.Timestamp = .zero,
     late: Io.Duration = .zero,
