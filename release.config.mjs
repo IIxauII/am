@@ -4,9 +4,9 @@ export default {
   branches: ['main'],
   plugins: [
     // Since the last v* tag: a feat releases a minor; a fix, a perf or a revert (titled `Revert` or
-    // `revert:`, and saying "This reverts commit <sha>.") a patch; a `!` or a BREAKING CHANGE
-    // footer a major. Anything else releases nothing (docs/releasing.md). The conventionalcommits
-    // preset is the one that reads the `!`.
+    // `revert:` with no scope, and saying "This reverts commit <sha>.") a patch; a `!` or a
+    // BREAKING CHANGE footer a major. Anything else releases nothing (docs/releasing.md). The
+    // conventionalcommits preset is the one that reads the `!`.
     ['@semantic-release/commit-analyzer', { preset: 'conventionalcommits' }],
     [
       '@semantic-release/exec',

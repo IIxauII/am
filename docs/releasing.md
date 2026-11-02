@@ -22,11 +22,11 @@ PR's title, which decides the release:
 
 A scope is fine: `fix(daemon): …`. A breaking change takes 0.x to 1.0.0, not to the next 0.x.
 
-A revert releases a patch when its title starts with `Revert` or `revert:` and its message says
-"This reverts commit <sha>." (as GitHub's Revert button and `git revert` write it): a PR from the
-Revert button (`Revert "…"`), or a `revert: …` PR whose commits came from `git revert`. A `revert:`
-title without that line releases nothing, and a `git revert` commit under any other title releases
-what that title does.
+A revert releases a patch when its title starts with `Revert` or `revert:` (no scope) and its
+message says "This reverts commit <sha>." (as GitHub's Revert button and `git revert` write it): a
+PR from the Revert button (`Revert "…"`), or a `revert: …` PR whose commits came from `git revert`.
+A `revert:` title without that line releases nothing, and so does a scoped `revert(…): …`. A
+`git revert` commit under any other title releases what that title does.
 
 The squash commit's body lists the branch's commits, so a `BREAKING CHANGE:` footer in any of them
 releases a major too, whatever the title, `chore:` and `docs:` included. GitHub's merge dialog

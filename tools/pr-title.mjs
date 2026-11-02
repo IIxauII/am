@@ -15,7 +15,7 @@ export function prTitleError(title) {
   return `PR title "${title}" isn't a conventional commit: <type>[(scope)][!]: <description>.
   feat: …                       releases a minor version
   fix: …, perf: …               releases a patch version
-  revert: …, Revert "…"         releases a patch version if it says "This reverts commit <sha>."
+  revert: …, Revert "…"         releases a patch version if it says "This reverts commit <sha>." and has no scope
   <type>!: … (feat!:, fix!: …)  releases a major version
   ${types.filter((t) => !['feat', 'fix', 'perf', 'revert'].includes(t)).join(': …, ')}: …  release nothing`
 }
