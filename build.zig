@@ -42,7 +42,7 @@ pub fn build(b: *std.Build) void {
     addTestKeys(b, test_module);
     const test_filters = b.option([]const []const u8, "test-filter", "Run only the tests whose names contain this") orelse &.{};
     const tests = b.addTest(.{ .root_module = test_module, .filters = test_filters });
-    const test_step = b.step("test", "Run unit tests (needs openssl on PATH), the engine page's and the token service's (node 24+, else skipped)");
+    const test_step = b.step("test", "Run unit tests (needs openssl on PATH), the engine page's, the token service's and the release tooling's (node 24+, else skipped)");
     const run_tests = b.addRunArtifact(tests);
     // Cross-compiling (e.g. -Dtarget=x86_64-windows) still builds the tests, then skips running them.
     run_tests.skip_foreign_checks = true;
@@ -51,7 +51,7 @@ pub fn build(b: *std.Build) void {
     // The engine page's own tests (JavaScript, against a fake MusicKit), run with node on the
     // host; skipped, with a note, where node 24+ isn't on PATH. A -Dtest-filter run is for Zig
     // tests by name, so it leaves them out.
-    // The token service's tests (token-worker/) run the same way.
+    // The token service's tests (token-worker/) and the release tooling's (tools/) run the same way.
     if (test_filters.len == 0) {
         // The built binary reports build.zig.zon's version. Left out of a -Dtest-filter run too,
         // since it compiles the whole executable.
@@ -69,7 +69,7 @@ pub fn build(b: *std.Build) void {
                 .target = b.graph.host,
             }),
         });
-        for ([_][]const u8{ "poc/web/app.test.mjs", "token-worker/test/worker.test.mjs" }) |file| {
+        for ([_][]const u8{ "poc/web/app.test.mjs", "token-worker/test/worker.test.mjs", "tools/release.test.mjs" }) |file| {
             const node_tests = b.addRunArtifact(runner);
             node_tests.setName(b.fmt("node tests ({s})", .{file}));
             node_tests.addFileArg(b.path(file));

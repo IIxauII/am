@@ -1,0 +1,34 @@
+# Fails a PR whose title isn't a conventional commit (feat:, fix:, feat!:, chore: …). A squash
+# merge makes the PR title the commit title on main, and semantic-release reads it to decide the
+# release (docs/releasing.md). The check itself is tools/pr-title.mjs.
+name: pr-title
+
+on:
+  pull_request:
+    # edited: the title changed. synchronize: so the check shows on each new head commit.
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  conventional:
+    name: conventional commit title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: tools/pr-title.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: The PR title is a conventional commit
+        env:
+          # Through the environment, never into the script: the title is the PR author's text.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: node tools/pr-title.mjs

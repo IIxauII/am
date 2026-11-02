@@ -1,0 +1,57 @@
+# On every push to main, semantic-release reads the commits since the last v* tag
+# (release.config.mjs). A feat, fix or breaking change releases: a release commit sets
+# build.zig.zon's .version, the v<version> tag goes on it, and release.yml builds the binaries and
+# publishes the GitHub Release. Anything else releases nothing. Runbook: docs/releasing.md.
+name: semantic-release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # One at a time: a push that lands meanwhile waits, and its run takes in every commit since the
+  # last tag.
+  group: semantic-release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    permissions:
+      # The release commit and the tag. Pushed with GITHUB_TOKEN, neither starts a workflow.
+      contents: write
+    outputs:
+      # The new tag, or empty when nothing was released.
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The whole history and the tags: the commits since the last tag decide the release.
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      # No package needs an install script; this job holds a token that can push to main.
+      - run: npm ci --ignore-scripts
+      - name: semantic-release
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: npx --no-install semantic-release
+
+  release:
+    needs: version
+    if: needs.version.outputs.tag != ''
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.version.outputs.tag }}
+    permissions:
+      contents: write
