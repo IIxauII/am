@@ -21,12 +21,24 @@ pub fn forEachProcess(gpa: Allocator, io: Io, context: anytype, comptime visit: 
         const exe_path = std.mem.print(&path_buffer, "/proc/{d}/exe", .{pid}) catch continue;
         const exe_len = Io.Dir.readLinkAbsolute(io, exe_path, &exe_buffer) catch continue;
         const cmdline_path = std.mem.print(&path_buffer, "/proc/{d}/cmdline", .{pid}) catch continue;
-        const cmdline = Io.Dir.cwd().readFileAlloc(io, cmdline_path, gpa, .limited(1 << 20)) catch continue;
+        const cmdline = readProcFileAlloc(gpa, io, cmdline_path) catch continue;
         defer gpa.free(cmdline);
         const args = try posix_backend.splitNul(gpa, cmdline);
         defer gpa.free(args);
         try visit(context, pid, exe_buffer[0..exe_len], args);
     }
+}
+
+/// The whole of a `/proc` file. Read as a stream: `/proc` files report size 0, and
+/// `Dir.readFileAlloc` stops at the reported size, so it reads nothing from them.
+fn readProcFileAlloc(gpa: Allocator, io: Io, path: []const u8) ![]u8 {
+    var file = try Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    var reader = file.readerStreaming(io, &.{});
+    return reader.interface.allocRemaining(gpa, .limited(1 << 20)) catch |e| switch (e) {
+        error.ReadFailed => reader.err.?,
+        error.OutOfMemory, error.StreamTooLong => |other| other,
+    };
 }
 
 pub fn processGroupOf(pid: pid_t) ?pid_t {
