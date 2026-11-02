@@ -1,6 +1,8 @@
 //! `am`: play Apple Music from the terminal. This file only wires arguments to commands.
 const std = @import("std");
 const apple = @import("apple.zig");
+/// From `build.zig`: `version` is `build.zig.zon`'s.
+const build_options = @import("build_options");
 const cli = @import("cli.zig");
 const commands = @import("commands.zig");
 const term = @import("tui/term.zig");
@@ -35,6 +37,10 @@ fn run(init: std.process.Init, out: *Io.Writer, err: *Io.Writer) u8 {
     switch (command) {
         .help => {
             out.writeAll(cli.usage) catch {};
+            return 0;
+        },
+        .version => {
+            out.writeAll("am " ++ build_options.version ++ "\n") catch {};
             return 0;
         },
         .tui => |t| {

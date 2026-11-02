@@ -1,8 +1,16 @@
 const std = @import("std");
 
+/// The one place the version is set; `am --version` prints it.
+const version = @import("build.zig.zon").version;
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    const strip = b.option(bool, "strip", "Leave out debug info (the release's Linux binaries)");
+
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "version", version);
 
     const exe = b.addExecutable(.{
         .name = "am",
@@ -10,9 +18,11 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = strip,
         }),
     });
     addEnginePage(b, exe.root_module);
+    exe.root_module.addOptions("build_options", build_options);
     b.installArtifact(exe);
 
     const run_step = b.step("run", "Run am");
@@ -28,6 +38,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     addEnginePage(b, test_module);
+    test_module.addOptions("build_options", build_options);
     addTestKeys(b, test_module);
     const test_filters = b.option([]const []const u8, "test-filter", "Run only the tests whose names contain this") orelse &.{};
     const tests = b.addTest(.{ .root_module = test_module, .filters = test_filters });
@@ -36,6 +47,14 @@ pub fn build(b: *std.Build) void {
     // Cross-compiling (e.g. -Dtarget=x86_64-windows) still builds the tests, then skips running them.
     run_tests.skip_foreign_checks = true;
     test_step.dependOn(&run_tests.step);
+
+    // The built binary reports build.zig.zon's version.
+    const version_check = b.addRunArtifact(exe);
+    version_check.setName("am --version");
+    version_check.addArg("--version");
+    version_check.expectStdOutEqual("am " ++ version ++ "\n");
+    version_check.skip_foreign_checks = true;
+    test_step.dependOn(&version_check.step);
 
     // The engine page's own tests (JavaScript, against a fake MusicKit), run with node on the
     // host; skipped, with a note, where node 24+ isn't on PATH. A -Dtest-filter run is for Zig

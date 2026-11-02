@@ -1,0 +1,98 @@
+# Builds the release binaries. A v* tag publishes them to a GitHub Release; a manual run, or a PR
+# that touches the build, only uploads them as workflow artifacts. Runbook: docs/releasing.md.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - build.zig
+      - build.zig.zon
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      MISE_ENABLE_TOOLS: zig
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+
+      - name: Read the version
+        id: version
+        run: |
+          version=$(sed -n 's/^ *\.version = "\(.*\)",$/\1/p' build.zig.zon)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build.zig.zon version: $version"
+
+      - name: The tag matches the version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::tag $TAG doesn't match build.zig.zon's .version ($VERSION): expected v$VERSION"
+            exit 1
+          fi
+
+      - name: Build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir dist
+          # <asset os>-<asset arch> <zig target> <extra flags>. The Linux builds are static
+          # and stripped (about 14 MB with debug info); the macOS ones link only the system library.
+          while read -r os arch target flags; do
+            name="am-$VERSION-$os-$arch"
+            zig build -Doptimize=ReleaseSafe -Dtarget="$target" ${flags:+"$flags"} --prefix "build/$name"
+            mkdir "dist/$name"
+            cp "build/$name/bin/am" LICENSE README.md "dist/$name/"
+            tar -C dist --owner=0 --group=0 --numeric-owner -czf "dist/$name.tar.gz" "$name"
+            rm -r "dist/$name"
+          done <<'EOF'
+          macos arm64 aarch64-macos
+          macos x86_64 x86_64-macos
+          linux arm64 aarch64-linux-musl -Dstrip
+          linux x86_64 x86_64-linux-musl -Dstrip
+          EOF
+          cd dist
+          sha256sum am-*.tar.gz > "am-$VERSION-checksums.txt"
+          cat "am-$VERSION-checksums.txt"
+
+      - name: The binary built for this runner reports the version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          file build/*/bin/am
+          test "$("build/am-$VERSION-linux-x86_64/bin/am" --version)" = "am $VERSION"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: am-${{ steps.version.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --verify-tag
