@@ -1,11 +1,22 @@
-# Builds the release binaries. A v* tag publishes them to a GitHub Release; a manual run, or a PR
-# that touches the build, only uploads them as workflow artifacts. Runbook: docs/releasing.md.
+# Builds the release binaries. Called by the semantic-release workflow with the tag it just made,
+# it publishes them to that tag's GitHub Release. A manual run, or a PR that touches the build, only
+# uploads them as workflow artifacts. Runbook: docs/releasing.md.
 name: release
 
 on:
-  push:
-    tags: ["v*"]
+  # A tag pushed with GITHUB_TOKEN starts no workflow, so semantic-release.yml calls this one.
+  workflow_call:
+    inputs:
+      tag:
+        description: The v<version> tag to build and publish
+        type: string
+        required: true
   workflow_dispatch:
+    inputs:
+      tag:
+        description: A v<version> tag to build instead of the branch (nothing is published)
+        type: string
+        required: false
   pull_request:
     paths:
       - .github/workflows/release.yml
@@ -22,6 +33,9 @@ jobs:
       MISE_ENABLE_TOOLS: zig
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The tag when one is given; otherwise empty, which checks out the branch or PR the run is for.
+          ref: ${{ inputs.tag }}
       - uses: jdx/mise-action@v5
 
       - name: Read the version
@@ -33,9 +47,9 @@ jobs:
           echo "build.zig.zon version: $version"
 
       - name: The tag matches the version
-        if: startsWith(github.ref, 'refs/tags/')
+        if: inputs.tag != ''
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           if [ "$TAG" != "v$VERSION" ]; then
@@ -83,8 +97,9 @@ jobs:
           if-no-files-found: error
 
   publish:
-    # Only a pushed tag publishes; a manual run, even on a tag, stops at the artifact.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    # Only the call from semantic-release.yml (a push to main) publishes; a manual run, even with
+    # a tag, stops at the artifact.
+    if: github.event_name == 'push' && inputs.tag != ''
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -97,5 +112,5 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag }}
         run: gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --verify-tag

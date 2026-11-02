@@ -26,7 +26,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
-      # The engine page's and the token service's tests need node 24+; without it they are skipped.
+      # The engine page's, the token service's and the release tooling's tests need node 24+;
+      # without it they are skipped.
       - uses: actions/setup-node@v7
         with:
           node-version: 24

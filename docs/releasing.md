@@ -4,39 +4,71 @@ A release is a `v<version>` tag on `IIxauII/am`. The tag's GitHub Release carrie
 (for mise), and the tap [`IIxauII/homebrew-am`](https://github.com/IIxauII/homebrew-am) builds
 the formula from the tag's source, with bottles (ready-made binaries) from the tap's own CI.
 
-A pushed tag and a published release are public and permanent: check the version before tagging.
+[semantic-release](https://semantic-release.gitbook.io) makes the tag: nobody bumps the version or
+tags by hand. A release is public and permanent, so title each PR for what it is.
 
-## 1. Bump the version
+## 1. Merge a `feat` or `fix` PR
 
-Set `.version` in `build.zig.zon`. It is the only place the version lives: `am --version`
-prints it, and `zig build test` checks that the built binary does.
+A PR title is a [conventional commit](https://www.conventionalcommits.org): the `pr-title` check
+fails a PR whose title isn't. PRs merge by squash only, and the squash commit on `main` takes the
+PR's title, which decides the release:
 
-Open a PR with the bump and merge it once the `test` workflow passes.
+| PR title | Release |
+| --- | --- |
+| `feat: …` | minor: 0.1.0 → 0.2.0 |
+| `fix: …`, `perf: …`, or a revert | patch: 0.1.0 → 0.1.1 |
+| `feat!: …`, `fix!: …` (any type with `!`), or a `BREAKING CHANGE:` footer | major: 0.1.0 → 1.0.0 |
+| `docs:`, `chore:`, `ci:`, `build:`, `test:`, `refactor:`, `style:` | none |
 
-## 2. Tag
+A scope is fine: `fix(daemon): …`. A breaking change takes 0.x to 1.0.0, not to the next 0.x.
 
-From an up-to-date `main`, with `0.2.0` standing for the new version:
+A revert releases a patch when its title starts with `Revert` or `revert:` (no scope) and its
+message says "This reverts commit <sha>." (as GitHub's Revert button and `git revert` write it): a
+PR from the Revert button (`Revert "…"`), or a `revert: …` PR whose commits came from `git revert`.
+A `revert:` title without that line releases nothing, and so does a scoped `revert(…): …`. A
+`git revert` commit under any other title releases what that title does.
 
-```bash
-git switch main
-git pull --ff-only
-git tag v0.2.0
-git push origin v0.2.0
-```
+The squash commit's body lists the branch's commits, so a `BREAKING CHANGE:` footer in any of them
+releases a major too, whatever the title, `chore:` and `docs:` included. GitHub's merge dialog
+shows that body: check it before every merge.
 
-The `release` workflow (`.github/workflows/release.yml`) then:
+On the push to `main`, the `semantic-release` workflow (`.github/workflows/semantic-release.yml`,
+configured in `release.config.mjs`) reads every commit since the last `v*` tag. If one of them
+releases, it:
 
-- fails if the tag is not `v` + `.version`;
-- builds ReleaseSafe binaries for macOS arm64 and x86_64 and static, stripped Linux arm64 and
-  x86_64;
-- publishes them to a GitHub Release as `am-<version>-<os>-<arch>.tar.gz`, with
-  `am-<version>-checksums.txt`.
+- sets `.version` in `build.zig.zon`, the one place the version lives (`am --version` prints it),
+  in a commit `chore(release): <version> [skip ci]` by `github-actions[bot]`, pushed to `main`;
+- tags that commit `v<version>`;
+- calls the `release` workflow (`.github/workflows/release.yml`), which checks out the tag, fails
+  if it is not `v` + `.version`, builds ReleaseSafe binaries for macOS arm64 and x86_64 and static,
+  stripped Linux arm64 and x86_64, and publishes them to a GitHub Release as
+  `am-<version>-<os>-<arch>.tar.gz`, with `am-<version>-checksums.txt`. The release notes list the
+  PRs merged since the last release.
+
+The release commit and the tag are pushed with `GITHUB_TOKEN`, so they start no other workflow.
+After a release, local `main` is one commit behind: `git pull --ff-only`.
 
 Watch it with `gh run watch --repo IIxauII/am`. To try the build without publishing, run the
-workflow by hand (`gh workflow run release.yml --repo IIxauII/am`): it uploads the four archives
-as a workflow artifact only.
+`release` workflow by hand: `gh workflow run release.yml --repo IIxauII/am` builds the branch, and
+`-f tag=v0.2.0` builds that tag. Either uploads the four archives as a workflow artifact only.
 
-## 3. Bump the formula
+If the run fails after the tag (in the build or the publish), the tag has no GitHub Release yet.
+Re-run the failed jobs: `gh run rerun <run id> --failed --repo IIxauII/am`. If the tag itself
+doesn't build, merge the `fix:` PR: it releases the next patch, and the tag without a release
+stays.
+
+The repo settings this relies on: squash merges only, with the PR title as the commit title.
+To set them again:
+
+```bash
+gh api -X PATCH repos/IIxauII/am -F allow_merge_commit=false -F allow_rebase_merge=false \
+  -F allow_squash_merge=true -f squash_merge_commit_title=PR_TITLE \
+  -f squash_merge_commit_message=COMMIT_MESSAGES
+```
+
+## 2. Bump the formula
+
+Once the GitHub Release is out, with the new version for `0.2.0`:
 
 ```bash
 brew bump-formula-pr --no-fork --no-browse \
@@ -45,9 +77,10 @@ brew bump-formula-pr --no-fork --no-browse \
 ```
 
 This opens a PR on the tap that updates `url` and `sha256` in `Formula/am.rb`. The tap's daily
-`brew bump` workflow opens the same PR on its own if you skip this step.
+`brew bump` workflow opens the same PR on its own if you skip this step, but opened with
+`GITHUB_TOKEN`, that PR starts no bottle CI: close and reopen it to start it.
 
-## 4. Wait for the bottle CI
+## 3. Wait for the bottle CI
 
 The PR's `brew test-bot` workflow builds and tests the formula on macOS and Linux and uploads
 the bottles as workflow artifacts. Wait until it is green:
@@ -58,7 +91,7 @@ gh pr checks <pr number> --repo IIxauII/homebrew-am --watch
 
 Don't merge the PR by hand: the next step does.
 
-## 5. Publish the bottles
+## 4. Publish the bottles
 
 ```bash
 gh workflow run publish.yml --repo IIxauII/homebrew-am -f pull_request=<pr number>

@@ -2,7 +2,7 @@
   "name": "am-dev",
   "private": true,
   "version": "0.0.0",
-  "description": "Node dev tooling for am: tests for the engine page (poc/web, embedded in the am binary) and the token service, plus the original Node prototype",
+  "description": "Node dev tooling for am: tests for the engine page (poc/web, embedded in the am binary) and the token service, the release tooling (semantic-release, release.config.mjs), plus the original Node prototype",
   "license": "GPL-3.0-only",
   "type": "module",
   "engines": {
@@ -12,6 +12,13 @@
     "am": "node poc/am.mjs",
     "test:page": "node poc/web/app.test.mjs",
     "test:worker": "node --test token-worker/test/",
+    "test:release": "node tools/release.test.mjs",
     "check:token-service": "node token-worker/live-check.mjs"
+  },
+  "devDependencies": {
+    "@semantic-release/exec": "^7.1.0",
+    "@semantic-release/git": "^11.0.1",
+    "conventional-changelog-conventionalcommits": "^10.4.1",
+    "semantic-release": "^25.0.9"
   }
 }
