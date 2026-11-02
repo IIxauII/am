@@ -48,19 +48,20 @@ pub fn build(b: *std.Build) void {
     run_tests.skip_foreign_checks = true;
     test_step.dependOn(&run_tests.step);
 
-    // The built binary reports build.zig.zon's version.
-    const version_check = b.addRunArtifact(exe);
-    version_check.setName("am --version");
-    version_check.addArg("--version");
-    version_check.expectStdOutEqual("am " ++ version ++ "\n");
-    version_check.skip_foreign_checks = true;
-    test_step.dependOn(&version_check.step);
-
     // The engine page's own tests (JavaScript, against a fake MusicKit), run with node on the
     // host; skipped, with a note, where node 24+ isn't on PATH. A -Dtest-filter run is for Zig
     // tests by name, so it leaves them out.
     // The token service's tests (token-worker/) run the same way.
     if (test_filters.len == 0) {
+        // The built binary reports build.zig.zon's version. Left out of a -Dtest-filter run too,
+        // since it compiles the whole executable.
+        const version_check = b.addRunArtifact(exe);
+        version_check.setName("am --version");
+        version_check.addArg("--version");
+        version_check.expectStdOutEqual("am " ++ version ++ "\n");
+        version_check.skip_foreign_checks = true;
+        test_step.dependOn(&version_check.step);
+
         const runner = b.addExecutable(.{
             .name = "page-tests",
             .root_module = b.createModule(.{

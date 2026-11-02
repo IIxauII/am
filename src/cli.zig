@@ -28,7 +28,7 @@ pub const usage =
     \\  doctor              start the engine, report DRM, MusicKit and sign-in status
     \\  daemon              run the background process in the foreground (the CLI starts it as needed)
     \\  daemon stop         stop the background process and its engine
-    \\  --version           print am's version
+    \\  version, --version  print am's version
     \\
 ;
 

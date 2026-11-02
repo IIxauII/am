@@ -10,7 +10,8 @@ permissions:
 
 concurrency:
   group: test-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push to a PR replaces its run; every commit on main keeps its own.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -32,6 +33,8 @@ jobs:
       # openssl, which the tests use for throwaway keys, comes with both runner images.
       - run: openssl version
       - name: zig build test
+        # Explicit bash runs with pipefail, so a failing zig build test fails the step, not just tee.
+        shell: bash
         run: |
           zig build test --summary all 2>&1 | tee test.log
           if grep -q "page tests skipped" test.log; then

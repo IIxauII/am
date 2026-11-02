@@ -52,7 +52,9 @@ jobs:
           # and stripped (about 14 MB with debug info); the macOS ones link only the system library.
           while read -r os arch target flags; do
             name="am-$VERSION-$os-$arch"
-            zig build -Doptimize=ReleaseSafe -Dtarget="$target" ${flags:+"$flags"} --prefix "build/$name"
+            # $flags is unquoted on purpose: it holds zero or more flags.
+            # shellcheck disable=SC2086
+            zig build -Doptimize=ReleaseSafe -Dtarget="$target" $flags --prefix "build/$name"
             mkdir "dist/$name"
             cp "build/$name/bin/am" LICENSE README.md "dist/$name/"
             tar -C dist --owner=0 --group=0 --numeric-owner -czf "dist/$name.tar.gz" "$name"
@@ -81,7 +83,8 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/')
+    # Only a pushed tag publishes; a manual run, even on a tag, stops at the artifact.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
     permissions:

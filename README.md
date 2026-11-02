@@ -2,8 +2,8 @@
 
 Apple Music in the terminal.
 
-Playback via headless Firefox or Google Chrome, so one of them must be installed
-(`brew install --cask firefox`).
+Playback via headless Firefox or Google Chrome, so one of them must be installed (on macOS:
+`brew install --cask firefox`; on Linux, from your distribution).
 
 ## Install
 
