@@ -238,6 +238,11 @@ pub fn findLeftovers(gpa: Allocator, io: Io, identity: platform.EngineIdentity) 
     // Without the binary there can't be an engine running it.
     const real_binary = Io.Dir.realPathFileAbsoluteAlloc(io, identity.binary, gpa) catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
+        // FindLeftoversError can't carry a cancelation: keep it for the caller's next blocking call.
+        error.Canceled => {
+            io.recancel();
+            return error.CantListProcesses;
+        },
         else => return &.{},
     };
     defer gpa.free(real_binary);
@@ -263,6 +268,10 @@ pub fn findLeftovers(gpa: Allocator, io: Io, identity: platform.EngineIdentity) 
     defer finder.matches.deinit(gpa);
     procs.forEachProcess(gpa, io, &finder, Finder.visit) catch |e| return switch (e) {
         error.OutOfMemory => error.OutOfMemory,
+        error.Canceled => {
+            io.recancel();
+            return error.CantListProcesses;
+        },
         else => error.CantListProcesses,
     };
     return leftoversFrom(gpa, finder.matches.items);
