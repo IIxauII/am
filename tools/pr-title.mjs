@@ -1,25 +1,26 @@
-// The PR title check (.github/workflows/pr-title.yml): a squash merge makes the PR title the
-// commit title on main, and semantic-release reads that title to decide the release.
-// `node tools/pr-title.mjs` checks $PR_TITLE.
+// The PR title check that .github/workflows/pr-title.yml runs: `node tools/pr-title.mjs` checks
+// $PR_TITLE. The release each type makes is in docs/releasing.md.
+import { realpathSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 const types = ['feat', 'fix', 'perf', 'revert', 'docs', 'style', 'refactor', 'test', 'build', 'ci', 'chore']
-const releasing = ['feat', 'fix', 'perf', 'revert']
-const conventional = new RegExp(`^(${types.join('|')})(\\([^()]+\\))?!?: \\S`)
+const conventionalTitle = new RegExp(`^(${types.join('|')})(\\([^()]+\\))?!?: \\S`)
 // What GitHub's Revert button titles its PR. Its commit says "This reverts commit <sha>.", which
 // semantic-release reads as a revert.
-const githubRevert = /^Revert ".+"$/
+const githubRevertTitle = /^Revert ".+"$/
 
 /** null for a conventional commit title, else what's wrong with it and how to write one. */
 export function prTitleError(title) {
-  if (conventional.test(title) || githubRevert.test(title)) return null
+  if (conventionalTitle.test(title) || githubRevertTitle.test(title)) return null
   return `PR title "${title}" isn't a conventional commit: <type>[(scope)][!]: <description>.
   feat: …                       releases a minor version
-  fix: …, perf: …, revert: …    releases a patch version
+  fix: …, perf: …               releases a patch version, as does a revert ("This reverts commit <sha>.")
   <type>!: … (feat!:, fix!: …)  releases a major version
-  ${types.filter((t) => !releasing.includes(t)).join(': …, ')}: …  release nothing`
+  ${types.filter((t) => !['feat', 'fix', 'perf', 'revert'].includes(t)).join(': …, ')}: …  release nothing`
 }
 
-if (import.meta.main) {
+// Run as a script, not imported by the tests. (import.meta.main would do, but needs Node 24.2.)
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const error = prTitleError(process.env.PR_TITLE ?? '')
   if (error) {
     // A workflow annotation takes one line; the details follow in the log.

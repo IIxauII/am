@@ -16,11 +16,17 @@ PR's title, which decides the release:
 | PR title | Release |
 | --- | --- |
 | `feat: …` | minor: 0.1.0 → 0.2.0 |
-| `fix: …`, `perf: …`, `revert: …` | patch: 0.1.0 → 0.1.1 |
+| `fix: …`, `perf: …`, or a revert | patch: 0.1.0 → 0.1.1 |
 | `feat!: …`, `fix!: …` (any type with `!`), or a `BREAKING CHANGE:` footer | major: 0.1.0 → 1.0.0 |
 | `docs:`, `chore:`, `ci:`, `build:`, `test:`, `refactor:`, `style:` | none |
 
-A scope is fine: `fix(daemon): …`. A breaking change takes 0.x to 1.0.0, not to the next 0.x.
+A scope is fine: `fix(daemon): …`. A revert is a PR from GitHub's Revert button (`Revert "…"`), or
+any whose commits say "This reverts commit <sha>." (as `git revert` writes); a `revert:` title
+alone releases nothing. A breaking change takes 0.x to 1.0.0, not to the next 0.x.
+
+The squash commit's body lists the branch's commits, so a `BREAKING CHANGE:` footer in any of them
+releases a major too, whatever the title. GitHub's merge dialog shows that body: check it before a
+`fix:` or `feat:` merge.
 
 On the push to `main`, the `semantic-release` workflow (`.github/workflows/semantic-release.yml`,
 configured in `release.config.mjs`) reads every commit since the last `v*` tag. If one of them

@@ -1,7 +1,8 @@
 // Sets `.version` in build.zig.zon, the one place am's version lives. semantic-release runs
 // `node tools/set-version.mjs <version>` from the repo root before its release commit
 // (release.config.mjs).
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 const versionLine = /^(\s*\.version = ")[^"]*(",)$/m
 
@@ -11,7 +12,8 @@ export function setVersion(zon, version) {
   return zon.replace(versionLine, `$1${version}$2`)
 }
 
-if (import.meta.main) {
+// Run as a script, not imported by the tests. (import.meta.main would do, but needs Node 24.2.)
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [version] = process.argv.slice(2)
   if (!version) {
     console.error('usage: node tools/set-version.mjs <version>')

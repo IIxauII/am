@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Empty, so the branch or PR that started the run, unless a tag is given.
+          # The tag when one is given; otherwise empty, which checks out the branch or PR the run is for.
           ref: ${{ inputs.tag }}
       - uses: jdx/mise-action@v5
 
