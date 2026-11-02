@@ -1,8 +1,16 @@
 const std = @import("std");
 
+/// The one place the version is set; `am --version` prints it.
+const version = @import("build.zig.zon").version;
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    const strip = b.option(bool, "strip", "Leave out debug info (the release's Linux binaries)");
+
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "version", version);
 
     const exe = b.addExecutable(.{
         .name = "am",
@@ -10,9 +18,11 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = strip,
         }),
     });
     addEnginePage(b, exe.root_module);
+    exe.root_module.addOptions("build_options", build_options);
     b.installArtifact(exe);
 
     const run_step = b.step("run", "Run am");
@@ -28,6 +38,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     addEnginePage(b, test_module);
+    test_module.addOptions("build_options", build_options);
     addTestKeys(b, test_module);
     const test_filters = b.option([]const []const u8, "test-filter", "Run only the tests whose names contain this") orelse &.{};
     const tests = b.addTest(.{ .root_module = test_module, .filters = test_filters });
@@ -42,6 +53,15 @@ pub fn build(b: *std.Build) void {
     // tests by name, so it leaves them out.
     // The token service's tests (token-worker/) run the same way.
     if (test_filters.len == 0) {
+        // The built binary reports build.zig.zon's version. Left out of a -Dtest-filter run too,
+        // since it compiles the whole executable.
+        const version_check = b.addRunArtifact(exe);
+        version_check.setName("am --version");
+        version_check.addArg("--version");
+        version_check.expectStdOutEqual("am " ++ version ++ "\n");
+        version_check.skip_foreign_checks = true;
+        test_step.dependOn(&version_check.step);
+
         const runner = b.addExecutable(.{
             .name = "page-tests",
             .root_module = b.createModule(.{

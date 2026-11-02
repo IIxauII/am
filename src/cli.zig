@@ -28,11 +28,13 @@ pub const usage =
     \\  doctor              start the engine, report DRM, MusicKit and sign-in status
     \\  daemon              run the background process in the foreground (the CLI starts it as needed)
     \\  daemon stop         stop the background process and its engine
+    \\  version, --version  print am's version
     \\
 ;
 
 pub const Command = union(enum) {
     help,
+    version,
     /// The full-screen player. Not `explicit` (no arguments): only on a terminal, else the usage.
     tui: struct { explicit: bool },
     token: struct { key_stdin: bool },
@@ -134,6 +136,11 @@ pub fn parse(arena: Allocator, args: []const []const u8) Allocator.Error!Command
         return @field(Command, simple);
     };
 
+    if (eql(name, "version") or eql(name, "--version")) {
+        if (rest.len > 0) return .{ .usage_error = try arena.print("version: unknown argument {s}", .{rest[0]}) };
+        return .version;
+    }
+
     if (eql(name, "doctor")) {
         if (rest.len > 0) return .{ .usage_error = try arena.print("doctor: unknown argument {s}", .{rest[0]}) };
         return .doctor;
@@ -171,6 +178,12 @@ test "help, -h and --help ask for the usage; no command or tui opens the player"
     try expectParse(.help, &.{"help"});
     try expectParse(.help, &.{"-h"});
     try expectParse(.help, &.{"--help"});
+}
+
+test "--version and version ask for the version, and take no arguments" {
+    try expectParse(.version, &.{"--version"});
+    try expectParse(.version, &.{"version"});
+    try expectParse(.{ .usage_error = "version: unknown argument --json" }, &.{ "version", "--json" });
 }
 
 test "token takes --key-stdin and nothing else" {

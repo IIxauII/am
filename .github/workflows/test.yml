@@ -1,0 +1,43 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  # A newer push to a PR replaces its run; every commit on main keeps its own.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # Zig from mise.toml; wrangler is for deploying the token service, not for tests.
+      MISE_ENABLE_TOOLS: zig
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      # The engine page's and the token service's tests need node 24+; without it they are skipped.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # openssl, which the tests use for throwaway keys, comes with both runner images.
+      - run: openssl version
+      - name: zig build test
+        # Explicit bash runs with pipefail, so a failing zig build test fails the step, not just tee.
+        shell: bash
+        run: |
+          zig build test --summary all 2>&1 | tee test.log
+          if grep -q "page tests skipped" test.log; then
+            echo "::error::the node tests were skipped"
+            exit 1
+          fi

@@ -73,20 +73,77 @@ test "withTimeout: the result when it comes in time, null when it doesn't" {
     try testing.expect(start.untilNow(io).raw.toMilliseconds() < 5000);
 }
 
+/// A clock for tests that never waits, so the scheduler can't change what a test sees: a sleep
+/// moves it on by what was asked plus `late` (a busy machine waking late) and is noted. Every
+/// other `Io` call is `Io.failing`'s.
+const FakeClock = struct {
+    at: Io.Timestamp = .zero,
+    late: Io.Duration = .zero,
+    slept_buffer: [8]Io.Duration = undefined,
+    sleeps: usize = 0,
+    /// A clock other than `awake` that was read or slept on; `Deadline` keeps to `awake`.
+    other_clock: ?Io.Clock = null,
+
+    const vtable: Io.VTable = fake: {
+        var v = Io.failing.vtable.*;
+        v.now = now;
+        v.sleep = sleep;
+        break :fake v;
+    };
+
+    fn io(c: *FakeClock) Io {
+        return .{ .userdata = c, .vtable = &vtable };
+    }
+
+    fn slept(c: *const FakeClock) []const Io.Duration {
+        return c.slept_buffer[0..c.sleeps];
+    }
+
+    fn now(userdata: ?*anyopaque, clock: Io.Clock) Io.Timestamp {
+        const c: *FakeClock = @ptrCast(@alignCast(userdata));
+        if (clock != .awake) c.other_clock = clock;
+        return c.at;
+    }
+
+    fn sleep(userdata: ?*anyopaque, timeout: Io.Timeout) Io.Cancelable!void {
+        const c: *FakeClock = @ptrCast(@alignCast(userdata));
+        // A sleep without end, or more sleeps than any test here expects: polling that doesn't
+        // stop fails the test rather than hanging it.
+        const duration = timeout.toDurationFromNow(c.io()) orelse return error.Canceled;
+        if (c.sleeps == c.slept_buffer.len) return error.Canceled;
+        if (duration.clock != .awake) c.other_clock = duration.clock;
+        c.slept_buffer[c.sleeps] = duration.raw;
+        c.sleeps += 1;
+        c.at = c.at.addDuration(duration.raw).addDuration(c.late);
+    }
+};
+
 test "polling stops at the deadline, not an interval later" {
-    const io = testing.io;
-    const start: Io.Clock.Timestamp = .now(io, .awake);
-    const deadline: Deadline = .after(io, .fromMilliseconds(120));
+    var clock: FakeClock = .{};
+    const deadline: Deadline = .after(clock.io(), .fromMilliseconds(120));
     var polls: usize = 0;
     while (try deadline.sleep(.fromMilliseconds(50))) polls += 1;
-    // 50 + 50 + 20 ms, or one fewer on a busy machine.
-    try testing.expect(polls == 2 or polls == 3);
+    try testing.expectEqual(@as(usize, 3), polls);
+    // The last sleep is only what's left, so polling ends right at the deadline.
+    try testing.expectEqualSlices(Io.Duration, &.{ .fromMilliseconds(50), .fromMilliseconds(50), .fromMilliseconds(20) }, clock.slept());
+    try testing.expectEqual(Io.Duration.fromMilliseconds(120), Io.Timestamp.zero.durationTo(clock.at));
     try testing.expect(deadline.passed());
-    const took = start.untilNow(io).raw.toMilliseconds();
-    try testing.expect(took >= 120 and took < 1000);
+    try testing.expectEqual(null, clock.other_clock);
+}
+
+test "a late wake, as on a busy machine, shortens the next sleep and adds no poll" {
+    // Each sleep ends 30 ms late: at 80 ms, 40 are left; at 150 ms, none.
+    var clock: FakeClock = .{ .late = .fromMilliseconds(30) };
+    const deadline: Deadline = .after(clock.io(), .fromMilliseconds(120));
+    var polls: usize = 0;
+    while (try deadline.sleep(.fromMilliseconds(50))) polls += 1;
+    try testing.expectEqual(@as(usize, 2), polls);
+    try testing.expectEqualSlices(Io.Duration, &.{ .fromMilliseconds(50), .fromMilliseconds(40) }, clock.slept());
 }
 
 test "a passed deadline doesn't sleep at all" {
-    const deadline: Deadline = .after(testing.io, .zero);
+    var clock: FakeClock = .{};
+    const deadline: Deadline = .after(clock.io(), .zero);
     try testing.expect(!try deadline.sleep(.fromSeconds(10)));
+    try testing.expectEqual(@as(usize, 0), clock.slept().len);
 }
