@@ -26,6 +26,7 @@ const protocol_mod = @import("../daemon/protocol.zig");
 const token_source = @import("../token_source.zig");
 const screen_mod = @import("screen.zig");
 const server_mod = @import("../daemon/server.zig");
+const settings_proto = @import("settings_prototype.zig");
 const term = @import("term.zig");
 const ui_mod = @import("ui.zig");
 const views = @import("views.zig");
@@ -297,6 +298,8 @@ pub const App = struct {
     /// Image id → cell size of its virtual placement (placeholders) or placement (placements).
     placed: std.AutoHashMapUnmanaged(u32, Placed) = .empty,
     frame_arena: std.heap.ArenaAllocator,
+    /// PROTOTYPE (prototype/settings-screen): the settings screen variants.
+    proto: settings_proto.Proto = undefined,
 
     log: Log,
     /// The watch task runs (it starts once signed in, so a setup screen starts no daemon).
@@ -343,6 +346,7 @@ pub const App = struct {
         o.io.random(&id_bytes);
         app.link.client_id = std.fmt.bytesToHex(id_bytes, .lower);
         app.image_override = o.settings.get("AM_IMAGES");
+        app.proto = .init(.parse(o.environ.get("AM_PROTO_SETTINGS")));
         app.loadState();
         return app;
     }
@@ -666,10 +670,41 @@ pub const App = struct {
             };
             return;
         }
-        if (app.ui.textMode()) {
-            if (keys.textCommand(k)) |cmd| app.ui.text(cmd, now);
-        } else if (keys.command(k)) |cmd| app.ui.command(cmd, now);
+        // PROTOTYPE (prototype/settings-screen): the settings screen takes keys first, and every
+        // key goes through this session's bindings.
+        app.proto.facts = app.protoFacts();
+        if (app.ui.overlay == .none and app.proto.key(k, app.ui.textMode())) return app.afterProto();
+        if (app.ui.textMode() and !app.proto.pageOpen()) {
+            if (app.proto.textCommand(k)) |cmd| app.ui.text(cmd, now);
+        } else if (app.proto.command(k)) |d| switch (d) {
+            .list => |cmd| app.ui.command(cmd, now),
+            .text, .settings => {},
+        };
+        app.afterProto();
         app.afterUi();
+    }
+
+    fn protoFacts(app: *App) settings_proto.Facts {
+        const can_kitty = app.kitty_ok or (if (app.image_override) |o| std.ascii.startsWithIgnoreCase(o, "kitty") or std.ascii.startsWithIgnoreCase(o, "place") else false);
+        return .{ .images_ok = can_kitty, .showing = switch (app.protocol) {
+            .kitty_placeholders, .kitty_placements => .images,
+            .half_blocks => .blocks,
+            .none => .off,
+        } };
+    }
+
+    fn afterProto(app: *App) void {
+        app.dirty = true;
+        if (app.proto.takeToast()) |t| app.toast(t, .info);
+        if (!app.proto.art_changed) return;
+        app.proto.art_changed = false;
+        const kitty: graphics.Protocol = if (graphics.choose(app.environ, true, "kitty") == .kitty_placeholders) .kitty_placeholders else .kitty_placements;
+        app.setProtocol(switch (app.proto.art) {
+            .auto => graphics.choose(app.environ, app.kitty_ok, app.image_override),
+            .images => kitty,
+            .blocks => .half_blocks,
+            .off => .none,
+        });
     }
 
     // ---- Auth ----
@@ -1218,6 +1253,7 @@ pub const App = struct {
         _ = app.frame_arena.reset(.retain_capacity);
         app.slots.clearRetainingCapacity();
         const now_ms = app.nowMs();
+        var proto_label: [24]u8 = undefined;
         var frame: views.Frame = .{
             .ui = &app.ui,
             .auth = &app.machine,
@@ -1236,14 +1272,26 @@ pub const App = struct {
             .busy = app.busy() or app.queue_inflight > 0,
             .slots = &app.slots,
             .gpa = app.gpa,
+            .proto_page = app.proto.pageOpen(),
+            .proto_sidebar = app.proto.sidebarLabel(&proto_label),
         };
         views.draw(&app.screen, &frame);
+        // PROTOTYPE (prototype/settings-screen): variant A's page, under the artwork.
+        app.proto.facts = app.protoFacts();
+        const l = layout.compute(app.screen.cols, app.screen.rows);
+        const main_ui = !l.too_small and (app.machine.phase == .ready or app.machine.in_session);
+        const t = views.theme(app.color, if (app.now_item) |n| n.artwork else null);
+        if (main_ui) app.proto.drawPage(&app.screen, t, l.main);
         // Drawing may have made views (and their loads).
         app.afterUiQuiet();
         const w = app.terminal.writer();
-        const overlay = app.ui.overlay != .none or (app.machine.phase != .ready and app.machine.in_session);
+        const overlay = app.ui.overlay != .none or app.proto.modalOpen() or (app.machine.phase != .ready and app.machine.in_session);
         app.drawImages(w, overlay);
         views.drawOverlays(&app.screen, &frame);
+        if (main_ui) {
+            if (app.ui.overlay == .none) app.proto.drawModal(&app.screen, t);
+            app.proto.drawPill(&app.screen, t, l.status);
+        }
         app.screen.flush(w, app.color, app.full_repaint) catch {};
         app.full_repaint = false;
         if (app.protocol == .kitty_placements) app.placeImages(w, overlay);

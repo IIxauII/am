@@ -59,6 +59,10 @@ pub const Frame = struct {
     busy: bool = false,
     slots: *std.ArrayList(ImageSlot),
     gpa: std.mem.Allocator,
+    /// PROTOTYPE (prototype/settings-screen): variant A's settings page covers the list pane.
+    proto_page: bool = false,
+    /// PROTOTYPE: variant A's sidebar entry, with its key.
+    proto_sidebar: ?[]const u8 = null,
 };
 
 // ---- Colors ----
@@ -177,7 +181,7 @@ pub fn draw(s: *Screen, f: *Frame) void {
     if (!f.ui.has_sidebar and f.ui.focus == .sidebar) f.ui.focus = .main;
     if (l.sidebar) |r| drawSidebar(s, f, t, r);
     if (l.tabs) |r| drawTabs(s, f, t, r);
-    drawMain(s, f, t, l.main);
+    if (!f.proto_page) drawMain(s, f, t, l.main);
     if (l.now) |r| drawNowPane(s, f, t, r);
     // Separators.
     if (l.sidebar) |r| vline(s, r.right(), 0, r.h, t);
@@ -308,7 +312,7 @@ fn drawSidebar(s: *Screen, f: *Frame, t: Theme, r: Rect) void {
             _ = s.print(r.x + 1, y, r.w - 1, "Library", t.dim());
             y += 1;
         }
-        const active = sec == u.section;
+        const active = sec == u.section and !f.proto_page;
         const picked = u.focus == .sidebar and i == u.sidebar_pick;
         const style: Style = if (picked) t.selected(true) else if (active) .{ .fg = t.accent, .bold = true } else .{};
         if (picked) s.fill(r.x, y, r.w, 1, style);
@@ -323,6 +327,14 @@ fn drawSidebar(s: *Screen, f: *Frame, t: Theme, r: Rect) void {
         if (active and !picked) _ = s.print(r.x, y, 1, "▌", .{ .fg = t.accent });
         y += 1;
     }
+    // PROTOTYPE (prototype/settings-screen): variant A's entry.
+    if (f.proto_sidebar) |hot| if (y + 1 < r.bottom()) {
+        y += 1;
+        var buf: [48]u8 = undefined;
+        const label = std.fmt.bufPrint(&buf, "{s} Settings", .{hot}) catch "Settings";
+        _ = s.print(r.x + 1, y, r.w -| 1, label, if (f.proto_page) .{ .fg = t.accent, .bold = true } else .{});
+        if (f.proto_page) _ = s.print(r.x, y, 1, "▌", .{ .fg = t.accent });
+    };
 }
 
 fn drawTabs(s: *Screen, f: *Frame, t: Theme, r: Rect) void {

@@ -109,6 +109,7 @@ test {
     _ = @import("tui/graphics.zig");
     _ = @import("tui/artwork.zig");
     _ = @import("tui/keys.zig");
+    _ = @import("tui/settings_prototype.zig");
     _ = @import("tui/layout.zig");
     _ = @import("tui/list.zig");
     _ = @import("tui/playstate.zig");
