@@ -1,0 +1,1 @@
+user_pref("javascript.options.mem.gc_balanced_heap_limits", true);

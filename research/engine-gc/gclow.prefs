@@ -1,0 +1,3 @@
+user_pref("javascript.options.mem.gc_low_frequency_heap_growth", 118);
+user_pref("javascript.options.mem.gc_allocation_threshold_mb", 1);
+user_pref("javascript.options.mem.gc_malloc_threshold_base_mb", 1);

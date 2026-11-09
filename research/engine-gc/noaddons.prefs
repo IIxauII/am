@@ -1,0 +1,3 @@
+user_pref("extensions.webcompat.enabled", false);
+user_pref("extensions.addons-search-detection.enabled", false);
+user_pref("extensions.ipp-activator.enabled", false);

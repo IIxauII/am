@@ -1,0 +1,28 @@
+diff --git a/poc/web/app.js b/poc/web/app.js
+index 86e2bb2..77611c3 100644
+--- a/poc/web/app.js
++++ b/poc/web/app.js
+@@ -1092,6 +1092,12 @@ function connect() {
+   }
+   let last = 0
+   let trailing = null
++  let ws
++  const open = () => {
++    ws = new WebSocket(`ws://localhost:${Number(location.port) + 1000}/`)
++    ws.onclose = () => setTimeout(open, 1000)
++  }
++  open()
+   report = () => {
+     // At most ~4 reports a second; one inside the 250 ms is sent at its end, so a burst of
+     // events always ends with a fresh report. The interval below sends one every second.
+@@ -1104,7 +1110,9 @@ function connect() {
+       return
+     }
+     last = Date.now()
+-    fetch('/report', { method: 'POST', body: JSON.stringify(snapshot()), keepalive: true }).catch(() => {})
++    // research variant "ws": the report goes over one WebSocket to a throwaway relay (port + 1000),
++    // which POSTs it to the daemon; no HTTP request from Firefox per report.
++    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(snapshot()))
+   }
+   setInterval(report, 1000)
+ }

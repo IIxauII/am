@@ -1,0 +1,2 @@
+user_pref("network.process.enabled", true);
+user_pref("network.http.network_access_on_socket_process.enabled", true);

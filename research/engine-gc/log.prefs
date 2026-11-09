@@ -1,0 +1,4 @@
+user_pref("javascript.options.mem.log", true);
+user_pref("services.settings.loglevel", "debug");
+user_pref("dom.push.loglevel", "debug");
+user_pref("devtools.console.stdout.chrome", true);

@@ -1,0 +1,166 @@
+== stock
+11:42 local  62  content-signature-2.cdn.mozilla.net /g/chains ×6, firefox-portal-detection.com /success.txt ×2, api.music.apple.com /v1/me ×2, location.services.mozilla.com /v1/country ×1, firefox-portal-detection.com /generate_204 ×1, js-cdn.music.apple.com /musickit/v3 ×1, push.services.mozilla.com / ×1
+11:43 local  61  firefox-portal-detection.com /success.txt ×2, firefox-portal-detection.com /generate_204 ×1
+12:02 local  60  push.services.mozilla.com / ×1
+12:04 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:22 local  60  push.services.mozilla.com / ×1
+12:34 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:42 local  60  content-signature-2.cdn.mozilla.net /g/chains ×19, location.services.mozilla.com /v1/country ×1, firefox-settings-attachments.cdn.mozilla.net /bundles/startup.json.mozlz4 ×1, firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com bounce-tracking-protection-exceptions ×1, push.services.mozilla.com / ×1
+12:57 local  60  firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com url-classifier-exceptions ×1, content-signature-2.cdn.mozilla.net /g/chains ×1
+13:02 local  60  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:04 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:22 local  60  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:34 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:42 local  60  location.services.mozilla.com /v1/country ×1, push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:57 local  60  firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com addons-bloomfilters ×1, content-signature-2.cdn.mozilla.net /g/chains ×1
+== noaddons
+11:50 local  52  content-signature-2.cdn.mozilla.net /g/chains ×5, firefox-portal-detection.com /success.txt ×2, api.music.apple.com /v1/me ×2, location.services.mozilla.com /v1/country ×1, firefox-portal-detection.com /generate_204 ×1, js-cdn.music.apple.com /musickit/v3 ×1, push.services.mozilla.com / ×1
+11:51 local  61  firefox-portal-detection.com /success.txt ×2, firefox-portal-detection.com /generate_204 ×1
+12:04 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:10 local  60  push.services.mozilla.com / ×1
+12:30 local  60  push.services.mozilla.com / ×1
+12:34 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:50 local  60  content-signature-2.cdn.mozilla.net /g/chains ×19, location.services.mozilla.com /v1/country ×1, firefox-settings-attachments.cdn.mozilla.net /bundles/startup.json.mozlz4 ×1, firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com bounce-tracking-protection-exceptions ×1, push.services.mozilla.com / ×1
+12:55 local  60  firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com url-classifier-exceptions ×1, content-signature-2.cdn.mozilla.net /g/chains ×1
+13:04 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:10 local  60  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:30 local  60  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:34 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:50 local  60  location.services.mozilla.com /v1/country ×1, push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+== netproc
+11:50 local  52  content-signature-2.cdn.mozilla.net /g/chains ×6, firefox-portal-detection.com /success.txt ×4, api.music.apple.com /v1/me ×2, location.services.mozilla.com /v1/country ×1, mozilla.cloudflare-dns.com /dns-query ×1, firefox-portal-detection.com /generate_204 ×1, js-cdn.music.apple.com /musickit/v3 ×1, push.services.mozilla.com / ×1
+11:51 local  61  firefox-portal-detection.com /success.txt ×4, firefox-portal-detection.com /generate_204 ×1
+12:04 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:10 local  60  push.services.mozilla.com / ×1
+12:30 local  60  push.services.mozilla.com / ×1
+12:34 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:50 local  60  content-signature-2.cdn.mozilla.net /g/chains ×19, location.services.mozilla.com /v1/country ×1, firefox-settings-attachments.cdn.mozilla.net /bundles/startup.json.mozlz4 ×1, firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com bounce-tracking-protection-exceptions ×1, push.services.mozilla.com / ×1
+12:55 local  60  firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com url-classifier-exceptions ×1, content-signature-2.cdn.mozilla.net /g/chains ×1
+13:04 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:10 local  60  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:30 local  60  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:34 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:50 local  60  location.services.mozilla.com /v1/country ×1, push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+== ws
+11:44 local   8  content-signature-2.cdn.mozilla.net /g/chains ×6, firefox-portal-detection.com /success.txt ×2, location.services.mozilla.com /v1/country ×1, firefox-portal-detection.com /generate_204 ×1, js-cdn.music.apple.com /musickit/v3 ×1, push.services.mozilla.com / ×1
+11:45 local  14  api.music.apple.com /v1/me ×2, firefox-portal-detection.com /generate_204 ×1
+11:46 local   2  firefox-portal-detection.com /success.txt ×2, firefox-portal-detection.com /generate_204 ×1
+12:04 local   0  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:05 local   0  push.services.mozilla.com / ×1
+12:25 local   0  push.services.mozilla.com / ×1
+12:34 local   0  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:44 local   0  content-signature-2.cdn.mozilla.net /g/chains ×19, location.services.mozilla.com /v1/country ×1, firefox-settings-attachments.cdn.mozilla.net /bundles/startup.json.mozlz4 ×1, firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com bounce-tracking-protection-exceptions ×1
+12:45 local   0  push.services.mozilla.com / ×1
+12:55 local   0  firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com url-classifier-exceptions ×1, content-signature-2.cdn.mozilla.net /g/chains ×1
+13:04 local   0  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:05 local   0  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:25 local   0  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:34 local   0  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:44 local   0  location.services.mozilla.com /v1/country ×1
+13:45 local   0  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+14:00 local   0  firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com addons-bloomfilters ×1, content-signature-2.cdn.mozilla.net /g/chains ×1
+== gclow
+11:50 local  53  content-signature-2.cdn.mozilla.net /g/chains ×5, firefox-portal-detection.com /success.txt ×2, api.music.apple.com /v1/me ×2, location.services.mozilla.com /v1/country ×1, firefox-portal-detection.com /generate_204 ×1, js-cdn.music.apple.com /musickit/v3 ×1, push.services.mozilla.com / ×1
+11:51 local  61  firefox-portal-detection.com /success.txt ×2, firefox-portal-detection.com /generate_204 ×1
+12:04 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:10 local  60  push.services.mozilla.com / ×1
+12:30 local  60  push.services.mozilla.com / ×1
+12:34 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:50 local  60  content-signature-2.cdn.mozilla.net /g/chains ×19, location.services.mozilla.com /v1/country ×1, firefox-settings-attachments.cdn.mozilla.net /bundles/startup.json.mozlz4 ×1, firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com bounce-tracking-protection-exceptions ×1, push.services.mozilla.com / ×1
+12:55 local  60  firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com url-classifier-exceptions ×1, content-signature-2.cdn.mozilla.net /g/chains ×1
+13:04 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:10 local  60  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:30 local  60  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:34 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:50 local  60  location.services.mozilla.com /v1/country ×1, push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+== gcbal
+11:50 local  56  content-signature-2.cdn.mozilla.net /g/chains ×6, firefox-portal-detection.com /success.txt ×2, api.music.apple.com /v1/me ×2, location.services.mozilla.com /v1/country ×1, firefox-portal-detection.com /generate_204 ×1, js-cdn.music.apple.com /musickit/v3 ×1, push.services.mozilla.com / ×1
+11:51 local  61  firefox-portal-detection.com /success.txt ×2, firefox-portal-detection.com /generate_204 ×1
+12:04 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:10 local  60  push.services.mozilla.com / ×1
+12:30 local  60  push.services.mozilla.com / ×1
+12:34 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:50 local  60  content-signature-2.cdn.mozilla.net /g/chains ×19, location.services.mozilla.com /v1/country ×1, firefox-settings-attachments.cdn.mozilla.net /bundles/startup.json.mozlz4 ×1, firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com bounce-tracking-protection-exceptions ×1, push.services.mozilla.com / ×1
+12:55 local  60  firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com url-classifier-exceptions ×1, content-signature-2.cdn.mozilla.net /g/chains ×1
+13:04 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:10 local  60  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:30 local  60  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:34 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:50 local  60  location.services.mozilla.com /v1/country ×1, push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+== bare-warm
+11:44 local   0  content-signature-2.cdn.mozilla.net /g/chains ×6, firefox-portal-detection.com /success.txt ×2, location.services.mozilla.com /v1/country ×1, firefox-portal-detection.com /generate_204 ×1, push.services.mozilla.com / ×1
+11:45 local   0  firefox-portal-detection.com /success.txt ×2, firefox-portal-detection.com /generate_204 ×1
+12:04 local   0  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1, push.services.mozilla.com / ×1
+12:24 local   0  push.services.mozilla.com / ×1
+12:34 local   0  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:44 local   0  content-signature-2.cdn.mozilla.net /g/chains ×19, location.services.mozilla.com /v1/country ×1, firefox-settings-attachments.cdn.mozilla.net /bundles/startup.json.mozlz4 ×1, firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com bounce-tracking-protection-exceptions ×1, push.services.mozilla.com / ×1
+12:54 local   0  firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com url-classifier-exceptions ×1, content-signature-2.cdn.mozilla.net /g/chains ×1
+13:04 local   0  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:05 local   0  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:25 local   0  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:34 local   0  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:44 local   0  location.services.mozilla.com /v1/country ×1
+13:45 local   0  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+14:00 local   0  firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com addons-bloomfilters ×1, content-signature-2.cdn.mozilla.net /g/chains ×1
+== bare-fresh
+11:44 local   0  content-signature-2.cdn.mozilla.net /g/chains ×22, firefox-settings-attachments.cdn.mozilla.net /main-workspace/tracking-protection-lists ×16, firefox.settings.services.mozilla.com changes ×3, firefox-portal-detection.com /success.txt ×2, location.services.mozilla.com /v1/country ×1, firefox.settings.services.mozilla.com /v2/ ×1, firefox-settings-attachments.cdn.mozilla.net /bundles/startup.json.mozlz4 ×1, firefox-portal-detection.com /generate_204 ×1, push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com fxmonitor-breaches ×1, firefox.settings.services.mozilla.com crash-reports-ondemand ×1, firefox.settings.services.mozilla.com ms-action-allowlists ×1, normandy.cdn.mozilla.net /api/v1 ×1, firefox-settings-attachments.cdn.mozilla.net /main-workspace/ms-language-packs ×1, classify-client.services.mozilla.com /api/v1 ×1
+11:45 local   0  firefox-settings-attachments.cdn.mozilla.net /security-state-staging/cert-revocations ×46, firefox-settings-attachments.cdn.mozilla.net /main-workspace/search-config-icons ×46, content-signature-2.cdn.mozilla.net /g/chains ×20, aus5.mozilla.org /update/3 ×2, firefox.settings.services.mozilla.com changes ×2, edgedl.me.gvt1.com /edgedl/release2 ×2, firefox-settings-attachments.cdn.mozilla.net /staging/addons-bloomfilters ×2, firefox-portal-detection.com /success.txt ×2, update.googleapis.com /service/update2 ×1, firefox.settings.services.mozilla.com addons-bloomfilters ×1, firefox.settings.services.mozilla.com cert-revocations ×1, ciscobinary.openh264.org /openh264-macosx64-aarch64-652bdb7719f30b52b08e506645a7322ff1b2cc6f.zip ×1, firefox.settings.services.mozilla.com intermediates ×1, firefox.settings.services.mozilla.com ai-window-prompts ×1, firefox.settings.services.mozilla.com onecrl ×1, firefox.settings.services.mozilla.com devtools-compatibility-browsers ×1, firefox.settings.services.mozilla.com search-telemetry-v2 ×1, firefox.settings.services.mozilla.com search-config-v2 ×1, firefox.settings.services.mozilla.com translations-models ×1, firefox.settings.services.mozilla.com search-config-icons ×1, firefox.settings.services.mozilla.com search-config-overrides-v2 ×1, firefox.settings.services.mozilla.com top-sites ×1, firefox.settings.services.mozilla.com newtab-sections-ordering ×1, firefox.settings.services.mozilla.com newtab-section-layouts ×1, firefox.settings.services.mozilla.com gfx ×1, firefox.settings.services.mozilla.com moz-essential-domain-fallbacks ×1, firefox.settings.services.mozilla.com search-default-override-allowlist ×1, firefox.settings.services.mozilla.com urlbar-persisted-search-terms ×1, firefox.settings.services.mozilla.com devtools-devices ×1, firefox.settings.services.mozilla.com websites-with-shared-credential-backends ×1, firefox.settings.services.mozilla.com password-rules ×1, firefox.settings.services.mozilla.com webcompat-interventions ×1, firefox.settings.services.mozilla.com translations-wasm ×1, firefox.settings.services.mozilla.com url-parser-default-unknown-schemes-interventions ×1, firefox.settings.services.mozilla.com url-classifier-skip-urls ×1, firefox.settings.services.mozilla.com addons-manager-settings ×1, firefox.settings.services.mozilla.com password-recipes ×1, firefox.settings.services.mozilla.com language-dictionaries ×1, firefox.settings.services.mozilla.com hijack-blocklists ×1, firefox.settings.services.mozilla.com anti-tracking-url-decoration ×1, firefox.settings.services.mozilla.com sites-classification ×1, firefox-settings-attachments.cdn.mozilla.net /bundles/security-state--intermediates.zip ×1, normandy.cdn.mozilla.net /api/v1 ×1, classify-client.services.mozilla.com /api/v1 ×1, services.addons.mozilla.org /api/v4 ×1, location.services.mozilla.com /v1/country ×1, safebrowsing.googleapis.com /v5/hashLists:batchGet ×1, firefox-portal-detection.com /generate_204 ×1
+12:04 local   0  push.services.mozilla.com / ×1
+12:15 local   0  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:24 local   0  push.services.mozilla.com / ×1
+12:44 local   0  location.services.mozilla.com /v1/country ×1, firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com bounce-tracking-protection-exceptions ×1, content-signature-2.cdn.mozilla.net /g/chains ×1, push.services.mozilla.com / ×1
+13:05 local   0  push.services.mozilla.com / ×1
+13:25 local   0  push.services.mozilla.com / ×1
+13:45 local   0  push.services.mozilla.com / ×1
+== bare-nopush
+11:44 local   0  content-signature-2.cdn.mozilla.net /g/chains ×24, firefox-settings-attachments.cdn.mozilla.net /main-workspace/tracking-protection-lists ×16, firefox.settings.services.mozilla.com changes ×4, firefox-portal-detection.com /success.txt ×2, location.services.mozilla.com /v1/country ×1, firefox.settings.services.mozilla.com /v2/ ×1, firefox-settings-attachments.cdn.mozilla.net /bundles/startup.json.mozlz4 ×1, firefox-portal-detection.com /generate_204 ×1, firefox.settings.services.mozilla.com hijack-blocklists ×1, firefox.settings.services.mozilla.com ms-action-allowlists ×1, firefox.settings.services.mozilla.com crash-reports-ondemand ×1, firefox.settings.services.mozilla.com fxmonitor-breaches ×1, firefox-settings-attachments.cdn.mozilla.net /main-workspace/ms-language-packs ×1, normandy.cdn.mozilla.net /api/v1 ×1, classify-client.services.mozilla.com /api/v1 ×1
+11:45 local   0  firefox-settings-attachments.cdn.mozilla.net /main-workspace/search-config-icons ×46, firefox-settings-attachments.cdn.mozilla.net /security-state-staging/cert-revocations ×46, content-signature-2.cdn.mozilla.net /g/chains ×19, aus5.mozilla.org /update/3 ×2, www.google.com /dl/release2 ×2, firefox-settings-attachments.cdn.mozilla.net /staging/addons-bloomfilters ×2, firefox-portal-detection.com /success.txt ×2, update.googleapis.com /service/update2 ×1, ciscobinary.openh264.org /openh264-macosx64-aarch64-652bdb7719f30b52b08e506645a7322ff1b2cc6f.zip ×1, normandy.cdn.mozilla.net /api/v1 ×1, classify-client.services.mozilla.com /api/v1 ×1, services.addons.mozilla.org /api/v4 ×1, firefox.settings.services.mozilla.com changes ×1, location.services.mozilla.com /v1/country ×1, firefox.settings.services.mozilla.com addons-bloomfilters ×1, firefox.settings.services.mozilla.com cert-revocations ×1, firefox.settings.services.mozilla.com intermediates ×1, firefox.settings.services.mozilla.com ai-window-prompts ×1, firefox.settings.services.mozilla.com onecrl ×1, firefox.settings.services.mozilla.com devtools-compatibility-browsers ×1, firefox.settings.services.mozilla.com search-telemetry-v2 ×1, firefox.settings.services.mozilla.com search-config-v2 ×1, firefox.settings.services.mozilla.com translations-models ×1, firefox.settings.services.mozilla.com search-config-icons ×1, firefox.settings.services.mozilla.com search-config-overrides-v2 ×1, firefox.settings.services.mozilla.com top-sites ×1, firefox.settings.services.mozilla.com newtab-sections-ordering ×1, firefox.settings.services.mozilla.com newtab-section-layouts ×1, firefox.settings.services.mozilla.com gfx ×1, firefox.settings.services.mozilla.com moz-essential-domain-fallbacks ×1, firefox.settings.services.mozilla.com search-default-override-allowlist ×1, firefox.settings.services.mozilla.com urlbar-persisted-search-terms ×1, firefox.settings.services.mozilla.com devtools-devices ×1, firefox.settings.services.mozilla.com websites-with-shared-credential-backends ×1, firefox.settings.services.mozilla.com password-rules ×1, firefox.settings.services.mozilla.com webcompat-interventions ×1, firefox.settings.services.mozilla.com translations-wasm ×1, firefox.settings.services.mozilla.com url-parser-default-unknown-schemes-interventions ×1, firefox.settings.services.mozilla.com url-classifier-skip-urls ×1, firefox.settings.services.mozilla.com addons-manager-settings ×1, firefox.settings.services.mozilla.com password-recipes ×1, firefox.settings.services.mozilla.com language-dictionaries ×1, firefox.settings.services.mozilla.com anti-tracking-url-decoration ×1, firefox.settings.services.mozilla.com sites-classification ×1, firefox-settings-attachments.cdn.mozilla.net /bundles/security-state--intermediates.zip ×1, safebrowsing.googleapis.com /v5/hashLists:batchGet ×1, firefox-portal-detection.com /generate_204 ×1
+12:15 local   0  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:44 local   0  location.services.mozilla.com /v1/country ×1, firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com bounce-tracking-protection-exceptions ×1, content-signature-2.cdn.mozilla.net /g/chains ×1
+== seed
+11:33 local  36  firefox-settings-attachments.cdn.mozilla.net /security-state-staging/cert-revocations ×46, content-signature-2.cdn.mozilla.net /g/chains ×45, firefox-settings-attachments.cdn.mozilla.net /main-workspace/tracking-protection-lists ×16, firefox.settings.services.mozilla.com changes ×6, edgedl.me.gvt1.com /edgedl/release2 ×4, aus5.mozilla.org /update/3 ×3, location.services.mozilla.com /v1/country ×2, firefox-portal-detection.com /success.txt ×2, update.googleapis.com /service/update2 ×2, normandy.cdn.mozilla.net /api/v1 ×2, classify-client.services.mozilla.com /api/v1 ×2, ciscobinary.openh264.org /openh264-macosx64-aarch64-652bdb7719f30b52b08e506645a7322ff1b2cc6f.zip ×2, firefox-settings-attachments.cdn.mozilla.net /staging/addons-bloomfilters ×2, firefox.settings.services.mozilla.com /v2/ ×1, firefox-settings-attachments.cdn.mozilla.net /bundles/startup.json.mozlz4 ×1, firefox-portal-detection.com /generate_204 ×1, js-cdn.music.apple.com /musickit/v3 ×1, firefox.settings.services.mozilla.com hijack-blocklists ×1, push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com ms-action-allowlists ×1, firefox.settings.services.mozilla.com crash-reports-ondemand ×1, firefox.settings.services.mozilla.com fxmonitor-breaches ×1, firefox-settings-attachments.cdn.mozilla.net /main-workspace/ms-language-packs ×1, firefox.settings.services.mozilla.com addons-bloomfilters ×1, firefox.settings.services.mozilla.com cert-revocations ×1, firefox.settings.services.mozilla.com intermediates ×1, firefox.settings.services.mozilla.com ai-window-prompts ×1, firefox.settings.services.mozilla.com onecrl ×1, firefox.settings.services.mozilla.com devtools-compatibility-browsers ×1, firefox.settings.services.mozilla.com search-telemetry-v2 ×1, firefox.settings.services.mozilla.com search-config-v2 ×1, firefox.settings.services.mozilla.com translations-models ×1, firefox.settings.services.mozilla.com search-config-icons ×1, firefox.settings.services.mozilla.com search-config-overrides-v2 ×1, firefox.settings.services.mozilla.com top-sites ×1, firefox.settings.services.mozilla.com newtab-sections-ordering ×1, firefox.settings.services.mozilla.com newtab-section-layouts ×1, firefox.settings.services.mozilla.com gfx ×1, firefox.settings.services.mozilla.com moz-essential-domain-fallbacks ×1, firefox.settings.services.mozilla.com search-default-override-allowlist ×1, firefox.settings.services.mozilla.com urlbar-persisted-search-terms ×1, firefox.settings.services.mozilla.com devtools-devices ×1, firefox.settings.services.mozilla.com websites-with-shared-credential-backends ×1, firefox.settings.services.mozilla.com password-rules ×1, firefox.settings.services.mozilla.com webcompat-interventions ×1, firefox.settings.services.mozilla.com translations-wasm ×1, firefox.settings.services.mozilla.com url-parser-default-unknown-schemes-interventions ×1, firefox.settings.services.mozilla.com url-classifier-skip-urls ×1, firefox.settings.services.mozilla.com addons-manager-settings ×1, firefox.settings.services.mozilla.com password-recipes ×1, firefox.settings.services.mozilla.com language-dictionaries ×1, firefox.settings.services.mozilla.com anti-tracking-url-decoration ×1, firefox.settings.services.mozilla.com sites-classification ×1, firefox-settings-attachments.cdn.mozilla.net /bundles/security-state--intermediates.zip ×1, services.addons.mozilla.org /api/v4 ×1
+11:34 local  66  api.music.apple.com /v1/me ×2, firefox-portal-detection.com /success.txt ×2, safebrowsing.googleapis.com /v5/hashLists:batchGet ×1, firefox-portal-detection.com /generate_204 ×1
+== wvtest
+11:55 local  16  content-signature-2.cdn.mozilla.net /g/chains ×5, firefox-portal-detection.com /success.txt ×2, api.music.apple.com /v1/me ×2, location.services.mozilla.com /v1/country ×1, firefox-portal-detection.com /generate_204 ×1, js-cdn.music.apple.com /musickit/v3 ×1, push.services.mozilla.com / ×1
+11:56 local  60  firefox-portal-detection.com /success.txt ×2, firefox-portal-detection.com /generate_204 ×1
+12:04 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:15 local  60  push.services.mozilla.com / ×1
+12:34 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:36 local  60  push.services.mozilla.com / ×1
+12:55 local  60  content-signature-2.cdn.mozilla.net /g/chains ×19, location.services.mozilla.com /v1/country ×1, firefox-settings-attachments.cdn.mozilla.net /bundles/startup.json.mozlz4 ×1, firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com bounce-tracking-protection-exceptions ×1
+12:56 local  60  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com url-classifier-exceptions ×1, content-signature-2.cdn.mozilla.net /g/chains ×1
+13:04 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:09 local  67  aod-ssl.itunes.apple.com /itunes-assets/Music211 ×20, play.itunes.apple.com /WebObjects/MZPlay.woa ×5, api.music.apple.com /v1/catalog ×2, api.music.apple.com /v1/me ×2, universal-activity-service.itunes.apple.com /play ×2, is1-ssl.mzstatic.com /image/thumb ×1
+13:12 local  62  aod-ssl.itunes.apple.com /itunes-assets/Music211 ×20, universal-activity-service.itunes.apple.com /play ×3, is1-ssl.mzstatic.com /image/thumb ×1, play.itunes.apple.com /WebObjects/MZPlay.woa ×1
+13:14 local  63  aod-ssl.itunes.apple.com /itunes-assets/Music211 ×20, universal-activity-service.itunes.apple.com /play ×3, play.itunes.apple.com /WebObjects/MZPlay.woa ×2, is1-ssl.mzstatic.com /image/thumb ×1
+13:15 local  64  aod-ssl.itunes.apple.com /itunes-assets/Music211 ×19, universal-activity-service.itunes.apple.com /play ×3
+13:16 local  60  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:27 local  60  play.itunes.apple.com /WebObjects/MZPlay.woa ×2
+13:34 local  60  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:36 local  60  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:38 local  60  play.itunes.apple.com /WebObjects/MZPlay.woa ×1
+13:51 local  60  play.itunes.apple.com /WebObjects/MZPlay.woa ×2
+13:53 local  60  play.itunes.apple.com /WebObjects/MZPlay.woa ×1
+13:55 local  60  location.services.mozilla.com /v1/country ×1
+13:56 local  60  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com addons-bloomfilters ×1, content-signature-2.cdn.mozilla.net /g/chains ×1
+== wsw
+11:56 local  10  content-signature-2.cdn.mozilla.net /g/chains ×5, firefox-portal-detection.com /success.txt ×2, api.music.apple.com /v1/me ×2, location.services.mozilla.com /v1/country ×1, firefox-portal-detection.com /generate_204 ×1, js-cdn.music.apple.com /musickit/v3 ×1, push.services.mozilla.com / ×1
+11:57 local   0  firefox-portal-detection.com /success.txt ×2, firefox-portal-detection.com /generate_204 ×1
+12:04 local   0  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:16 local   0  push.services.mozilla.com / ×1
+12:34 local   0  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+12:36 local   0  push.services.mozilla.com / ×1
+12:56 local   0  content-signature-2.cdn.mozilla.net /g/chains ×20, firefox.settings.services.mozilla.com changes ×2, location.services.mozilla.com /v1/country ×1, firefox-settings-attachments.cdn.mozilla.net /bundles/startup.json.mozlz4 ×1, firefox.settings.services.mozilla.com bounce-tracking-protection-exceptions ×1, push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com url-classifier-exceptions ×1
+13:04 local   0  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:16 local   0  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:20 local   2  aod-ssl.itunes.apple.com /itunes-assets/Music211 ×20, play.itunes.apple.com /WebObjects/MZPlay.woa ×5, api.music.apple.com /v1/catalog ×2, api.music.apple.com /v1/me ×2, universal-activity-service.itunes.apple.com /play ×2, is1-ssl.mzstatic.com /image/thumb ×1
+13:22 local   0  aod-ssl.itunes.apple.com /itunes-assets/Music211 ×3, universal-activity-service.itunes.apple.com /play ×1, is1-ssl.mzstatic.com /image/thumb ×1, play.itunes.apple.com /WebObjects/MZPlay.woa ×1
+13:23 local   0  aod-ssl.itunes.apple.com /itunes-assets/Music211 ×17, universal-activity-service.itunes.apple.com /play ×2
+13:25 local   0  aod-ssl.itunes.apple.com /itunes-assets/Music211 ×20, universal-activity-service.itunes.apple.com /play ×3, play.itunes.apple.com /WebObjects/MZPlay.woa ×2, is1-ssl.mzstatic.com /image/thumb ×1
+13:26 local   1  aod-ssl.itunes.apple.com /itunes-assets/Music211 ×19, universal-activity-service.itunes.apple.com /play ×3
+13:34 local   0  safebrowsing.googleapis.com /v5/hashLists:batchGet ×1
+13:36 local   0  push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1
+13:38 local   0  play.itunes.apple.com /WebObjects/MZPlay.woa ×2
+13:40 local   0  play.itunes.apple.com /WebObjects/MZPlay.woa ×1
+13:51 local   0  play.itunes.apple.com /WebObjects/MZPlay.woa ×1
+13:56 local   0  location.services.mozilla.com /v1/country ×1, push.services.mozilla.com / ×1, firefox.settings.services.mozilla.com changes ×1, firefox.settings.services.mozilla.com addons-bloomfilters ×1, content-signature-2.cdn.mozilla.net /g/chains ×1
