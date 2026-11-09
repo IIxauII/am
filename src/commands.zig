@@ -2,9 +2,10 @@
 const std = @import("std");
 const apple = @import("apple.zig");
 const config = @import("config.zig");
-const daemon = @import("daemon.zig");
+const daemon_client = @import("daemon/client.zig");
 const developer_token = @import("developer_token.zig");
 const platform = @import("platform.zig");
+const settings_mod = @import("settings.zig");
 const token_source = @import("token_source.zig");
 
 const Allocator = std.mem.Allocator;
@@ -29,7 +30,8 @@ pub const Context = struct {
     err: *Io.Writer,
     environ: *const Environ.Map,
     config_dir: []const u8,
-    settings: config.Settings,
+    /// Read once per command.
+    settings: settings_mod.Settings,
     apple_transport: apple.Transport,
 
     pub const InitError = Failed || Allocator.Error || Io.Dir.ReadFileAllocError;
@@ -42,15 +44,14 @@ pub const Context = struct {
             .err = err,
             .environ = environ,
             .config_dir = undefined,
-            .settings = .{ .environ = environ, .file = .init(arena) },
+            .settings = undefined,
             .apple_transport = apple_transport,
         };
         ctx.config_dir = platform.configDir(arena, environ) catch |e| return switch (e) {
             error.NoHomeDir, error.Unsupported => ctx.fail("{s}", .{platform.describeConfigDirError(e)}),
             error.OutOfMemory => error.OutOfMemory,
         };
-        if (try ctx.readConfigFile(config.file.env)) |text|
-            ctx.settings.file = try config.parseEnvFile(arena, text, platform.homeDir(environ));
+        ctx.settings = try settings_mod.load(io, arena, ctx.config_dir, environ);
         return ctx;
     }
 
@@ -75,19 +76,15 @@ pub const Context = struct {
 
     /// TEAM_ID and KEY_ID, from the environment or the env file.
     pub fn ids(ctx: *const Context) (Failed || Allocator.Error)!developer_token.Ids {
-        const team_id = ctx.settings.get("TEAM_ID");
-        const key_id = ctx.settings.get("KEY_ID");
-        if (team_id == null or key_id == null) {
-            const team_line = "TEAM_ID=<your Apple Developer Team ID>";
-            const key_line = "KEY_ID=<the ID of your MusicKit key>";
-            const which, const lines, const pronoun = if (team_id == null and key_id == null)
-                .{ "TEAM_ID and KEY_ID", team_line ++ " and " ++ key_line, "them" }
-            else if (team_id == null) .{ "TEAM_ID", team_line, "it" } else .{ "KEY_ID", key_line, "it" };
-            return ctx.fail("{s} missing: put {s} in {s}, or set {s} in the environment", .{
-                which, lines, try ctx.configPath(config.file.env), pronoun,
-            });
-        }
-        return .{ .team_id = team_id.?, .key_id = key_id.? };
+        if (ctx.settings.ids()) |both| return both;
+        const team_line = "TEAM_ID=<your Apple Developer Team ID>";
+        const key_line = "KEY_ID=<the ID of your MusicKit key>";
+        const which, const lines, const pronoun = if (ctx.settings.team_id == null and ctx.settings.key_id == null)
+            .{ "TEAM_ID and KEY_ID", team_line ++ " and " ++ key_line, "them" }
+        else if (ctx.settings.team_id == null) .{ "TEAM_ID", team_line, "it" } else .{ "KEY_ID", key_line, "it" };
+        return ctx.fail("{s} missing: put {s} in {s}, or set {s} in the environment", .{
+            which, lines, try ctx.configPath(config.file.env), pronoun,
+        });
     }
 
     pub const TokenError = Failed || token_source.GetError;
@@ -122,8 +119,10 @@ pub const Context = struct {
 
     /// The background process's port: `AM_PORT`, else 47823.
     pub fn daemonPort(ctx: *const Context) Failed!u16 {
-        return daemon.portFromSetting(ctx.settings.get("AM_PORT")) orelse
-            ctx.fail(daemon.bad_port, .{ctx.settings.get("AM_PORT").?});
+        return switch (ctx.settings.port) {
+            .ok => |port| port,
+            .bad => |why| ctx.fail("{s}", .{why}),
+        };
     }
 
     /// The stored Music User Token, if there is a usable one.
@@ -134,8 +133,8 @@ pub const Context = struct {
 
 /// A client for the background process, started if needed. `error.NotRunning` only when
 /// `start` is false.
-pub fn connectDaemon(ctx: *const Context, gpa: Allocator, options: Context.ConnectOptions) (Failed || error{NotRunning} || Allocator.Error || Io.Cancelable)!daemon.client.Client {
-    return daemon.client.connect(.{
+pub fn connectDaemon(ctx: *const Context, gpa: Allocator, options: Context.ConnectOptions) (Failed || error{NotRunning} || Allocator.Error || Io.Cancelable)!daemon_client.Client {
+    return daemon_client.connect(.{
         .io = ctx.io,
         .gpa = gpa,
         .arena = ctx.arena,

@@ -14,6 +14,18 @@ const png = @import("png.zig");
 const Environ = std.process.Environ;
 const Io = std.Io;
 
+/// How to draw artwork: the `AM_IMAGES` setting.
+pub const Images = enum {
+    /// Kitty graphics where the terminal answers the query, else half blocks.
+    auto,
+    /// Kitty graphics, with placeholders where the terminal is known to have them.
+    kitty,
+    placeholders,
+    placements,
+    blocks,
+    off,
+};
+
 pub const Protocol = enum {
     /// Kitty graphics shown through U+10EEEE placeholder text (Ghostty, kitty): the image lives
     /// in the cell grid, so redraws, scrolling and overwrites need no extra commands.
@@ -31,16 +43,16 @@ pub const Protocol = enum {
 /// `ESC_Gi=31;OK ESC\` before it means no kitty graphics.
 pub const query = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[16t\x1b[c";
 
-/// Picks the protocol. `kitty_ok`: the terminal answered `query` with OK. `override` is the
-/// `AM_IMAGES` setting: `kitty`, `placeholders`, `placements`, `blocks` or `off`; anything else
-/// (or null) means automatic.
-pub fn choose(environ: *const Environ.Map, kitty_ok: bool, override: ?[]const u8) Protocol {
-    if (override) |o| {
-        if (std.ascii.eqlIgnoreCase(o, "off") or std.ascii.eqlIgnoreCase(o, "none")) return .none;
-        if (std.ascii.eqlIgnoreCase(o, "blocks")) return .half_blocks;
-        if (std.ascii.eqlIgnoreCase(o, "placeholders")) return .kitty_placeholders;
-        if (std.ascii.eqlIgnoreCase(o, "placements")) return .kitty_placements;
-        if (std.ascii.eqlIgnoreCase(o, "kitty")) return if (placeholdersKnown(environ)) .kitty_placeholders else .kitty_placements;
+/// Picks the protocol. `kitty_ok`: the terminal answered `query` with OK. `images` is the
+/// `AM_IMAGES` setting; `auto` picks from the terminal.
+pub fn choose(environ: *const Environ.Map, kitty_ok: bool, images: Images) Protocol {
+    switch (images) {
+        .off => return .none,
+        .blocks => return .half_blocks,
+        .placeholders => return .kitty_placeholders,
+        .placements => return .kitty_placements,
+        .kitty => return if (placeholdersKnown(environ)) .kitty_placeholders else .kitty_placements,
+        .auto => {},
     }
     if (eql(env(environ, "TERM"), "dumb")) return .none;
     // tmux swallows kitty APCs unless wrapped for passthrough, which this doesn't do.
@@ -283,29 +295,29 @@ fn mapOf(pairs: []const [2][]const u8) !Environ.Map {
 test "choose: placeholders on Ghostty and kitty, placements elsewhere, half blocks without kitty" {
     var ghostty = try mapOf(&.{ .{ "TERM_PROGRAM", "ghostty" }, .{ "TERM", "xterm-256color" } });
     defer ghostty.deinit();
-    try testing.expectEqual(Protocol.kitty_placeholders, choose(&ghostty, true, null));
-    try testing.expectEqual(Protocol.half_blocks, choose(&ghostty, false, null));
+    try testing.expectEqual(Protocol.kitty_placeholders, choose(&ghostty, true, .auto));
+    try testing.expectEqual(Protocol.half_blocks, choose(&ghostty, false, .auto));
 
     var kitty = try mapOf(&.{.{ "KITTY_WINDOW_ID", "1" }});
     defer kitty.deinit();
-    try testing.expectEqual(Protocol.kitty_placeholders, choose(&kitty, true, null));
+    try testing.expectEqual(Protocol.kitty_placeholders, choose(&kitty, true, .auto));
 
     var wezterm = try mapOf(&.{.{ "TERM_PROGRAM", "WezTerm" }});
     defer wezterm.deinit();
-    try testing.expectEqual(Protocol.kitty_placements, choose(&wezterm, true, null));
-    try testing.expectEqual(Protocol.half_blocks, choose(&wezterm, false, null));
+    try testing.expectEqual(Protocol.kitty_placements, choose(&wezterm, true, .auto));
+    try testing.expectEqual(Protocol.half_blocks, choose(&wezterm, false, .auto));
 
     var tmux = try mapOf(&.{ .{ "TERM_PROGRAM", "ghostty" }, .{ "TMUX", "/tmp/tmux-501/default,1,0" } });
     defer tmux.deinit();
-    try testing.expectEqual(Protocol.half_blocks, choose(&tmux, true, null));
+    try testing.expectEqual(Protocol.half_blocks, choose(&tmux, true, .auto));
 
     var dumb = try mapOf(&.{.{ "TERM", "dumb" }});
     defer dumb.deinit();
-    try testing.expectEqual(Protocol.none, choose(&dumb, false, null));
+    try testing.expectEqual(Protocol.none, choose(&dumb, false, .auto));
 
     var no_color = try mapOf(&.{.{ "NO_COLOR", "1" }});
     defer no_color.deinit();
-    try testing.expectEqual(Protocol.none, choose(&no_color, false, null));
+    try testing.expectEqual(Protocol.none, choose(&no_color, false, .auto));
 }
 
 test "choose: AM_IMAGES overrides detection" {
@@ -313,13 +325,12 @@ test "choose: AM_IMAGES overrides detection" {
     defer ghostty.deinit();
     var plain = try mapOf(&.{});
     defer plain.deinit();
-    try testing.expectEqual(Protocol.none, choose(&ghostty, true, "off"));
-    try testing.expectEqual(Protocol.half_blocks, choose(&ghostty, true, "blocks"));
-    try testing.expectEqual(Protocol.kitty_placeholders, choose(&ghostty, false, "kitty"));
-    try testing.expectEqual(Protocol.kitty_placements, choose(&plain, false, "kitty"));
-    try testing.expectEqual(Protocol.kitty_placements, choose(&ghostty, true, "placements"));
-    try testing.expectEqual(Protocol.kitty_placeholders, choose(&plain, false, "Placeholders"));
-    try testing.expectEqual(Protocol.half_blocks, choose(&plain, false, "nonsense"));
+    try testing.expectEqual(Protocol.none, choose(&ghostty, true, .off));
+    try testing.expectEqual(Protocol.half_blocks, choose(&ghostty, true, .blocks));
+    try testing.expectEqual(Protocol.kitty_placeholders, choose(&ghostty, false, .kitty));
+    try testing.expectEqual(Protocol.kitty_placements, choose(&plain, false, .kitty));
+    try testing.expectEqual(Protocol.kitty_placements, choose(&ghostty, true, .placements));
+    try testing.expectEqual(Protocol.kitty_placeholders, choose(&plain, false, .placeholders));
 }
 
 test "the startup query is the spec's 1x1 query, CSI 16 t and DA1" {

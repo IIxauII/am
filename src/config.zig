@@ -1,5 +1,6 @@
-//! Settings from `<config dir>/env` and the environment, and the names of the files the config
-//! directory holds. Where the directory is comes from the platform layer.
+//! The files the config directory holds: their names, reading them, and the stored tokens.
+//! Where the directory is comes from the platform layer; the settings (the env file and the
+//! environment) come from `settings.zig`.
 const std = @import("std");
 
 const Allocator = std.mem.Allocator;
@@ -49,92 +50,7 @@ pub fn storedToken(contents: ?[]const u8) ?[]const u8 {
     return token;
 }
 
-/// Settings lookup: a real environment variable wins over the env file.
-pub const Settings = struct {
-    environ: *const Environ.Map,
-    file: Environ.Map,
-
-    pub fn get(s: *const Settings, key: []const u8) ?[]const u8 {
-        return getEnv(s.environ, key) orelse s.file.get(key);
-    }
-};
-
-/// Parses env-file text. `home` expands a leading `~`. Allocates into `arena`.
-pub fn parseEnvFile(arena: Allocator, text: []const u8, home: ?[]const u8) !Environ.Map {
-    var map: Environ.Map = .init(arena);
-    var lines = std.mem.splitScalar(u8, text, '\n');
-    while (lines.next()) |line| {
-        const eq = std.mem.findScalar(u8, line, '=') orelse continue;
-        const key = trimSpace(line[0..eq]);
-        if (!isKey(key)) continue;
-        try map.put(key, try expandHome(arena, unquote(trimSpace(line[eq + 1 ..])), home));
-    }
-    return map;
-}
-
-fn isKey(s: []const u8) bool {
-    if (s.len == 0 or std.ascii.isDigit(s[0])) return false;
-    for (s) |c| if (!(std.ascii.isUpper(c) or std.ascii.isDigit(c) or c == '_')) return false;
-    return true;
-}
-
-fn unquote(s: []const u8) []const u8 {
-    if (s.len >= 2 and (s[0] == '"' or s[0] == '\'') and s[s.len - 1] == s[0]) return s[1 .. s.len - 1];
-    return s;
-}
-
-fn expandHome(arena: Allocator, value: []const u8, home: ?[]const u8) ![]const u8 {
-    const h = home orelse return value;
-    if (std.mem.eql(u8, value, "~")) return h;
-    if (std.mem.startsWith(u8, value, "~/")) return std.mem.concat(arena, u8, &.{ h, value[1..] });
-    return value;
-}
-
 const testing = std.testing;
-
-test "the env file is KEY=VALUE lines, with optional quotes and ~ expanded" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const text =
-        \\# comment
-        \\TEAM_ID=TEAM123456
-        \\  KEY_ID = "KEY1234567"
-        \\FIREFOX_PATH='~/bin/firefox'
-        \\CHROME_PATH=~
-        \\NOT_HOME=a~b
-        \\lowercase=ignored
-        \\garbage line
-        \\EMPTY=
-        \\MISMATCHED="quote'
-        \\
-    ;
-    const map = try parseEnvFile(arena.allocator(), text, "/home/u");
-    try testing.expectEqualStrings("TEAM123456", map.get("TEAM_ID").?);
-    try testing.expectEqualStrings("KEY1234567", map.get("KEY_ID").?);
-    try testing.expectEqualStrings("/home/u/bin/firefox", map.get("FIREFOX_PATH").?);
-    try testing.expectEqualStrings("/home/u", map.get("CHROME_PATH").?);
-    try testing.expectEqualStrings("a~b", map.get("NOT_HOME").?);
-    try testing.expectEqualStrings("", map.get("EMPTY").?);
-    try testing.expectEqualStrings("\"quote'", map.get("MISMATCHED").?);
-    try testing.expectEqual(null, map.get("lowercase"));
-    try testing.expectEqual(@as(usize, 7), map.count());
-}
-
-test "a real environment variable wins over the env file" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    var environ: Environ.Map = .init(arena.allocator());
-    try environ.put("KEY_ID", "FROMENV000");
-    try environ.put("TEAM_ID", "");
-    const settings: Settings = .{
-        .environ = &environ,
-        .file = try parseEnvFile(arena.allocator(), "KEY_ID=FROMFILE00\nTEAM_ID=TEAM123456\n", null),
-    };
-    try testing.expectEqualStrings("FROMENV000", settings.get("KEY_ID").?);
-    // An empty variable counts as unset.
-    try testing.expectEqualStrings("TEAM123456", settings.get("TEAM_ID").?);
-    try testing.expectEqual(null, settings.get("ENGINE"));
-}
 
 test "a stored token is its file without surrounding whitespace" {
     try testing.expectEqualStrings("eyJh.eyJp.c2ln", storedToken("eyJh.eyJp.c2ln\n").?);

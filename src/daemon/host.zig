@@ -23,6 +23,9 @@ pub const Host = struct {
     page: engine_page.Page,
     /// The cancel generation of plays and stops.
     plays: *Plays,
+    /// The warnings about the settings the daemon runs with (`settings.Settings.warnings`), read
+    /// when it started, for `am doctor`.
+    settings_warnings: []const []const u8 = &.{},
 
     /// What a page call can fail with: no page, a page gone or silent, a shutdown.
     pub const CallError = channel_mod.Channel.CallError || Allocator.Error || Io.Cancelable;
@@ -47,6 +50,9 @@ pub const Host = struct {
         playbackClaim: *const fn (ptr: *anyopaque) u64,
         build: *const fn (ptr: *anyopaque) []const u8,
         waitChange: *const fn (ptr: *anyopaque, after: ?u64, timeout: Io.Duration) Io.Cancelable!u64,
+        /// The warnings about the settings as they are now, for `am doctor` to set beside
+        /// `settings_warnings`; null when the env file can't be read.
+        settingsWarningsNow: *const fn (ptr: *anyopaque, arena: Allocator) (Allocator.Error || Io.Cancelable)!?[]const []const u8,
         /// One line for the daemon's log.
         log: *const fn (ptr: *anyopaque, line: []const u8) void,
     };
@@ -192,6 +198,10 @@ pub const Host = struct {
     /// Which developer token the engine page gets, and where it came from.
     pub fn developerToken(h: Host, arena: Allocator) (Allocator.Error || Io.Cancelable)!DeveloperToken {
         return h.vtable.developerToken(h.ptr, arena);
+    }
+
+    pub fn settingsWarningsNow(h: Host, arena: Allocator) (Allocator.Error || Io.Cancelable)!?[]const []const u8 {
+        return h.vtable.settingsWarningsNow(h.ptr, arena);
     }
 };
 
@@ -573,6 +583,9 @@ pub const Fake = struct {
     signin_waits: []const SigninWait = &.{.{ .count = 0, .result = null, .window_open = false }},
     token: TokenStatus = .{ .checked = .{ .status = 200, .storefront = "gb" } },
     developer: DeveloperToken = .{ .found = .{ .line = "your own, kid=KEY iss=TEAM expires 2027-04-01 00:00 UTC" } },
+    settings_warnings: []const []const u8 = &.{},
+    /// What `settingsWarningsNow` answers; null: the same as `settings_warnings`.
+    settings_warnings_now: ?[]const []const u8 = null,
     /// The canned engine page (`Host.page`): what `start` and `probe` answer.
     page_started: engine_page.Started = .{ .kind = "chrome", .pid = 4242, .started = false, .headless = true, .ready = true, .report = .{} },
     page_probe: engine_page.Probe = .{ .h264 = "probably", .aac = "probably", .mseAac = true, .widevine = true },
@@ -628,6 +641,7 @@ pub const Fake = struct {
             .ptr = f,
             .gpa = std.testing.allocator,
             .plays = &f.plays,
+            .settings_warnings = f.settings_warnings,
             .vtable = &.{
                 .call = fakeCall,
                 .userTokenStatus = fakeTokenStatus,
@@ -644,6 +658,7 @@ pub const Fake = struct {
                 .playbackClaim = fakePlaybackClaim,
                 .build = fakeBuild,
                 .waitChange = fakeWaitChange,
+                .settingsWarningsNow = fakeSettingsWarningsNow,
                 .log = fakeLog,
             },
             .page = .{ .ptr = f, .vtable = &.{
@@ -725,6 +740,10 @@ pub const Fake = struct {
         defer f.change_hits += 1;
         if (f.change_hits >= f.changes.len) return error.Canceled;
         return f.changes[f.change_hits] orelse error.Canceled;
+    }
+    fn fakeSettingsWarningsNow(ptr: *anyopaque, _: Allocator) (Allocator.Error || Io.Cancelable)!?[]const []const u8 {
+        const f = of(ptr);
+        return f.settings_warnings_now orelse f.settings_warnings;
     }
     fn fakeLog(ptr: *anyopaque, line: []const u8) void {
         const f = of(ptr);

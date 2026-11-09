@@ -11,12 +11,6 @@ pub const Kind = enum {
     firefox,
     chrome,
 
-    /// `ENGINE` from the env file or environment; Firefox when unset.
-    pub fn fromSetting(value: ?[]const u8) ?Kind {
-        const v = value orelse return .firefox;
-        return std.meta.stringToEnum(Kind, v);
-    }
-
     pub fn spec(kind: Kind) *const Spec {
         return specs.getPtrConst(kind);
     }
@@ -27,8 +21,6 @@ pub const Spec = struct {
     /// The profile directory's name inside the config directory. It persists across launches
     /// (Widevine module, cached `musickit.js`).
     profile_name: []const u8,
-    /// The setting that overrides where the browser is.
-    path_setting: []const u8,
     /// Where this OS keeps it, and what else it needs there.
     browser: platform.Browser,
     /// Added to the daemon's environment.
@@ -42,7 +34,6 @@ pub const Spec = struct {
 const specs: std.EnumArray(Kind, Spec) = .init(.{
     .firefox = .{
         .profile_name = "firefox-profile",
-        .path_setting = "FIREFOX_PATH",
         .browser = platform.browsers.firefox,
         .env = &.{ .{ "MOZ_CRASHREPORTER_DISABLE", "1" }, .{ "MOZ_DISABLE_AUTO_SAFE_MODE", "1" } },
         .user_js = true,
@@ -50,7 +41,6 @@ const specs: std.EnumArray(Kind, Spec) = .init(.{
     },
     .chrome = .{
         .profile_name = "chrome-profile",
-        .path_setting = "CHROME_PATH",
         .browser = platform.browsers.chrome,
         .env = &.{},
         .user_js = false,
@@ -166,13 +156,6 @@ pub fn plan(arena: Allocator, o: Options) Allocator.Error!Launch {
 }
 
 const testing = std.testing;
-
-test "ENGINE picks the browser: Firefox by default, Chrome on request, nothing else" {
-    try testing.expectEqual(Kind.firefox, Kind.fromSetting(null).?);
-    try testing.expectEqual(Kind.firefox, Kind.fromSetting("firefox").?);
-    try testing.expectEqual(Kind.chrome, Kind.fromSetting("chrome").?);
-    try testing.expectEqual(null, Kind.fromSetting("safari"));
-}
 
 test "Chrome gets the POC's flags, its own profile, and the engine page" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);

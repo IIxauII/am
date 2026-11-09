@@ -3,7 +3,7 @@
 //   node token-worker/live-check.mjs [token service URL]
 //
 // The URL defaults to TOKEN_URL, else https://am-token.xauyxau.workers.dev/token (the built-in
-// one, src/token_source.zig `default_url`).
+// one, src/settings.zig `default_token_url`).
 //
 // 1. GET the token from the service (prints its header and claims, never the token).
 // 2. GET /v1/test and one catalog search with it and `Origin: http://localhost:47823`: must be 200.

@@ -2,7 +2,9 @@
 //! MusicKit's exact EME config, `browserSupportsVideoDrm`, the Music User Token, MusicKit's
 //! authorization and the subscription. Each check prints ✔, ✘ or ?, as in the Node POC. The
 //! engine page module (`engine_page.zig`) makes the repairs; doctor asks it to repair the page if
-//! idle and reports what came back.
+//! idle and reports what came back. Before all that come the warnings about the settings the
+//! daemon runs with (values, env-file keys and lines am ignores), and how the env file changed
+//! them since the daemon read it at start.
 const std = @import("std");
 const engine_page = @import("engine_page.zig");
 const host_mod = @import("host.zig");
@@ -18,6 +20,8 @@ const Reply = protocol.Reply;
 /// subscription: all about the page as the repair left it.
 pub fn run(host: Host, r: *Reply) Reply.Error!void {
     const a = r.arena;
+    // First, so that an engine that doesn't start still shows them.
+    try settingsWarnings(host, r);
     var problem: []const u8 = "";
     const started = host.page.start(a, &problem) catch |e| switch (e) {
         error.EngineFailed => return r.fail("the engine didn't start: {s}", .{problem}),
@@ -76,6 +80,24 @@ pub fn run(host: Host, r: *Reply) Reply.Error!void {
     try r.check(report.subscriptionActive, "Apple Music subscription active{s}{s}", .{
         if (report.meError != null) ": " else if (report.subscriptionActive == null) ": unknown until MusicKit is authorized" else "", report.meError orelse "",
     });
+}
+
+/// The warnings the daemon started with, and those the env file has gained since. The daemon
+/// reads it only at start, so either kind says when it changed. Its environment stays as it was.
+fn settingsWarnings(host: Host, r: *Reply) Reply.Error!void {
+    const now = try host.settingsWarningsNow(r.arena);
+    for (host.settings_warnings) |warning| {
+        // Gone, or now about another value (`false` became `true`, also bad): changed, not fixed.
+        const changed = if (now) |n| !contains(n, warning) else false;
+        try r.print("warning: {s}{s}\n", .{ warning, if (changed) " (changed in the env file since the daemon started, which reads it only when it starts)" else "" });
+    }
+    for (now orelse &.{}) |warning| if (!contains(host.settings_warnings, warning))
+        try r.print("warning: {s} (new in the env file since the daemon started, which reads it only when it starts)\n", .{warning});
+}
+
+fn contains(list: []const []const u8, text: []const u8) bool {
+    for (list) |item| if (std.mem.eql(u8, item, text)) return true;
+    return false;
 }
 
 const testing = std.testing;
@@ -176,6 +198,40 @@ test "a rejected Music User Token, or one that couldn't be checked, says so, and
         // Token repairs only with a Music User Token Apple accepts.
         try testing.expectEqual(false, f.idle_user_token_ok);
     }
+}
+
+test "doctor starts with the warnings about the daemon's settings, then checks as always" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f: Fake = .{ .arena = a, .settings_warnings = &.{
+        "ENGINE_HEADLESS in the env file must be 0 (show the engine) or 1 (headless), not \"false\": ignored, the engine runs headless",
+        "ENGINE_IDEL_MINUTES in the env file isn't a setting: ignored. The settings are AM_PORT, …",
+    } };
+    try testing.expect(std.mem.startsWith(u8, try runDoctor(&f, a),
+        \\warning: ENGINE_HEADLESS in the env file must be 0 (show the engine) or 1 (headless), not "false": ignored, the engine runs headless
+        \\warning: ENGINE_IDEL_MINUTES in the env file isn't a setting: ignored. The settings are AM_PORT, …
+        \\engine: chrome (headless), pid 4242 (already running)
+        \\
+    ));
+}
+
+test "doctor says which warnings the env file changed or gained since the daemon started" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f: Fake = .{
+        .arena = a,
+        .settings_warnings = &.{ "ENGINE_HEADLESS in the env file must be 0 …", "FIREFOX_WIDEVINE in the environment must be google …" },
+        .settings_warnings_now = &.{ "FIREFOX_WIDEVINE in the environment must be google …", "ENGINE_IDEL_MINUTES in the env file isn't a setting …" },
+    };
+    try testing.expect(std.mem.startsWith(u8, try runDoctor(&f, a),
+        \\warning: ENGINE_HEADLESS in the env file must be 0 … (changed in the env file since the daemon started, which reads it only when it starts)
+        \\warning: FIREFOX_WIDEVINE in the environment must be google …
+        \\warning: ENGINE_IDEL_MINUTES in the env file isn't a setting … (new in the env file since the daemon started, which reads it only when it starts)
+        \\engine: chrome (headless), pid 4242 (already running)
+        \\
+    ));
 }
 
 /// The page MusicKit signed out, as the engine start found it.
