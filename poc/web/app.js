@@ -107,6 +107,99 @@ function snapshot() {
     // MusicKit has dropped the item: this is what a resume restarts.
     stoppedLive,
     ...safe(() => playerState(m, item), {}),
+    expMedia: safe(() => expMediaState(), null),
+  }
+}
+
+// research/radio-stop-spin (throwaway, never merged): every media element anything played
+// through, and experiments the harness triggers with setVolume(code / 10000) for 0 < code < 100.
+// Weak, so an element MusicKit drops can still be collected as without this hook.
+const expEls = new Set()
+{
+  const origPlay = HTMLMediaElement.prototype.play
+  HTMLMediaElement.prototype.play = function (...a) {
+    if (![...expEls].some((r) => r.deref() === this)) expEls.add(new WeakRef(this))
+    return origPlay.apply(this, a)
+  }
+}
+function expAllEls() {
+  const els = new Set()
+  for (const r of expEls) {
+    const el = r.deref()
+    if (el) els.add(el)
+    else expEls.delete(r)
+  }
+  for (const el of document.querySelectorAll('audio, video')) els.add(el)
+  return [...els]
+}
+function expMediaState() {
+  return expAllEls().map((el) => {
+    const b = el.buffered
+    return {
+      tag: el.tagName.toLowerCase(),
+      id: el.id || null,
+      inDoc: el.isConnected,
+      paused: el.paused,
+      muted: el.muted,
+      volume: el.volume,
+      t: Math.round(el.currentTime * 10) / 10,
+      bufStart: b.length ? Math.round(b.start(0) * 10) / 10 : null,
+      bufEnd: b.length ? Math.round(b.end(b.length - 1) * 10) / 10 : null,
+      seekEnd: el.seekable.length ? Math.round(el.seekable.end(el.seekable.length - 1) * 10) / 10 : null,
+      readyState: el.readyState,
+      networkState: el.networkState,
+      src: (el.currentSrc || el.src || '').slice(0, 5),
+      mediaKeys: !!el.mediaKeys,
+    }
+  })
+}
+async function exp(code) {
+  const late = []
+  const t0 = performance.now()
+  const done = (what) => note('exp', `${code} ${what} in ${Math.round(performance.now() - t0)} ms; state=${enumName(MusicKit.PlaybackStates, music?.playbackState)} isPlaying=${music?.isPlaying} late=${late.join(',')}`)
+  try {
+    switch (code) {
+      case 1: // reload the page, as the engine page module does
+        note('exp', '1 reload')
+        setTimeout(() => location.reload(), 100)
+        return
+      case 2: // MusicKit's stop(), whatever is loaded
+        await settle(late, 'stop()', music.stop())
+        await until(notPlaying)
+        return done('music.stop()')
+      case 3: // MusicKit's pause(), whatever is loaded (live radio included)
+        note('exp', `3 capabilities.canPause=${music.capabilities?.canPause} before`)
+        await settle(late, 'pause()', music.pause())
+        await until(notPlaying)
+        return done('music.pause()')
+      case 4: // pause the media elements under MusicKit
+        for (const el of expAllEls()) el.pause()
+        await until(notPlaying)
+        return done('element.pause()')
+      case 5: // play the media elements under MusicKit
+        await settle(late, 'element.play()', Promise.all(expAllEls().map((el) => el.play())), START_MS)
+        await until(playing, 5000)
+        return done('element.play()')
+      case 6: // MusicKit's play()
+        await settle(late, 'play()', music.play(), START_MS)
+        await until(playing, 5000)
+        return done('music.play()')
+      case 7: // inspect
+        return note('exp', `7 ${JSON.stringify({ caps: music.capabilities, state: enumName(MusicKit.PlaybackStates, music.playbackState), isPlaying: music.isPlaying, t: music.currentPlaybackTime, els: expMediaState() })}`.slice(0, 1500))
+      case 8: // mute the media elements
+        for (const el of expAllEls()) el.muted = true
+        return done('element.muted=true')
+      case 9: // unmute the media elements
+        for (const el of expAllEls()) el.muted = false
+        return done('element.muted=false')
+      case 10: // jump to the live edge of the media element
+        for (const el of expAllEls()) if (el.seekable.length) el.currentTime = el.seekable.end(el.seekable.length - 1)
+        return done('element.currentTime=seekable end')
+      default:
+        return note('exp', `${code} unknown`)
+    }
+  } catch (err) {
+    note('exp', `${code} failed: ${errText(err)}`)
   }
 }
 
@@ -1012,6 +1105,11 @@ const am = {
   },
   setVolume(v) {
     requireMusic()
+    const code = Math.round(Number(v) * 10000)
+    if (code > 0 && code < 100) {
+      exp(code)
+      return snapshot()
+    }
     volume = Math.min(1, Math.max(0, Number(v) || 0))
     music.volume = volume
     return snapshot()
