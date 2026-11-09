@@ -513,7 +513,7 @@ pub const Daemon = struct {
     config_dir: []const u8,
     /// Read once, at start: restart the daemon (`am daemon stop`) to apply a change.
     settings: settings_mod.Settings,
-    /// `AM_PORT` and `ENGINE`, which the daemon doesn't start without.
+    /// `AM_PORT` and `ENGINE`, from `settings.daemonStart`.
     port: u16,
     engine_kind: engine.Kind,
     /// The last "can't download a newer shared token" logged, so the backoff's repeats aren't.
@@ -1344,14 +1344,15 @@ pub const RunError = error{
 /// already holds the port; fails when another daemon uses the config dir.
 pub fn run(o: RunOptions) RunError!void {
     if (o.detach) platform.detachFromTerminal();
-    // A bad AM_PORT, ENGINE or ENGINE_IDLE_MINUTES refuses the start; with none, all three are ok.
-    if (o.settings.refusal()) |why| {
-        o.err.print("error: {s}\n", .{why}) catch {};
-        return error.Reported;
-    }
-    const port = o.settings.port.ok;
-    const idle_minutes = o.settings.engine_idle_minutes.ok;
-    const idle: Io.Duration = .fromSeconds(@as(i64, idle_minutes) * 60);
+    const start = switch (o.settings.daemonStart()) {
+        .ok => |start| start,
+        .bad => |why| {
+            o.err.print("error: {s}\n", .{why}) catch {};
+            return error.Reported;
+        },
+    };
+    const port = start.port;
+    const idle: Io.Duration = .fromSeconds(@as(i64, start.idle_minutes) * 60);
 
     // One daemon per config dir: a second one, even on another port, would kill the first
     // one's engine as a leftover (same profile).
@@ -1393,7 +1394,7 @@ pub fn run(o: RunOptions) RunError!void {
         .config_dir = o.config_dir,
         .settings = o.settings.*,
         .port = port,
-        .engine_kind = o.settings.engine.ok,
+        .engine_kind = start.engine,
         .secret = undefined,
         .channel = .init(o.io, o.gpa),
         .server = undefined,
@@ -1434,7 +1435,7 @@ pub fn run(o: RunOptions) RunError!void {
         return error.Reported;
     };
     d.log("listening on localhost:{d} (pid {d}, build {s}, engine {t}, idle close after {d} min)", .{
-        port, platform.currentPid(), d.build_id, d.engine_kind, idle_minutes,
+        port, platform.currentPid(), d.build_id, d.engine_kind, start.idle_minutes,
     });
     // `am doctor` reports them too.
     for (d.settings.warnings) |warning| d.log("warning: {s}", .{warning});

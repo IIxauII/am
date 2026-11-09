@@ -17,7 +17,7 @@ const config = @import("config.zig");
 const deadline = @import("deadline.zig");
 const developer_token = @import("developer_token.zig");
 const platform = @import("platform.zig");
-const settings = @import("settings.zig");
+const settings_mod = @import("settings.zig");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -40,7 +40,7 @@ pub const download_timeout_s = 10;
 
 /// The only port a shared token works on: its origin claim names the engine page there
 /// (`apple.origin`).
-pub const shared_port = settings.default_port;
+pub const shared_port = settings_mod.default_port;
 
 const day = std.time.s_per_day;
 
@@ -82,7 +82,10 @@ pub const Result = union(enum) {
 };
 
 /// `AM_PORT`, or why its value isn't a port.
-pub const Port = settings.Checked(u16);
+pub const Port = settings_mod.Checked(u16);
+
+/// `TOKEN_URL`: the token service's URL (null: there is none), or why it isn't one.
+pub const Url = settings_mod.Checked(?[]const u8);
 
 /// The kept shared token's file: the token, the service it came from, and when a download from
 /// there last failed (Unix seconds), one per line.
@@ -113,8 +116,7 @@ pub const Input = struct {
     /// The stored own token (`config.storedToken`), if any.
     own: ?[]const u8,
     kept: Kept,
-    /// The token service's URL; null when there is none.
-    url: ?[]const u8,
+    url: Url,
     port: Port,
     /// Unix seconds.
     now: i64,
@@ -144,11 +146,15 @@ pub fn choose(arena: Allocator, io: Io, in: Input, transport: apple.Transport) E
             else => own_problem = try arena.print("{f}", .{developer_token.Problem{ .status = status }}),
         }
     }
-    const url = in.url orelse return problem(own_problem orelse try arena.print(
+    const service = switch (in.url) {
+        .ok => |url| url,
+        .bad => |why| return problem(try orOwn(arena, own_problem, why), false),
+    };
+    const url = service orelse return problem(own_problem orelse try arena.print(
         "no developer token: put TEAM_ID=<your Apple Developer Team ID> and KEY_ID=<the ID of your MusicKit key> in {s} and run am token --key-stdin, or set TOKEN_URL=<the shared token service> there",
         .{in.env_path},
     ), own_problem == null);
-    if (try unusable(arena, url, in.port)) |why| return problem(try orOwn(arena, own_problem, why), false);
+    if (try wrongPort(arena, in.port)) |why| return problem(try orOwn(arena, own_problem, why), false);
 
     const kept = try keptToken(arena, in.kept, url, in.now);
     if (kept) |k| {
@@ -234,8 +240,11 @@ pub fn renewChoice(arena: Allocator, io: Io, in: Input, refused: []const u8, tra
         if (std.mem.eql(u8, own, refused)) return .{};
         if (in.ids) |ids| if ((try developer_token.check(arena, own, ids, in.now)) == .usable) return .{ .token = own, .outcome = .own };
     }
-    const url = in.url orelse return .{};
-    if (try unusable(arena, url, in.port) != null) return .{};
+    const url = switch (in.url) {
+        .ok => |url| url orelse return .{},
+        .bad => return .{},
+    };
+    if (try wrongPort(arena, in.port) != null) return .{};
     const kept = try keptToken(arena, in.kept, url, in.now);
     if (kept) |k| if (!std.mem.eql(u8, k.token, refused)) return .{ .token = k.token, .outcome = .kept };
     // As in `choose`: with no unexpired token kept, nothing works meanwhile, so the wait is short.
@@ -282,9 +291,8 @@ fn orOwn(arena: Allocator, own: ?[]const u8, shared: []const u8) Allocator.Error
     return arena.print("{s}; and {s}", .{ o, shared });
 }
 
-/// Why a shared token from `url` can't work here, if it can't.
-fn unusable(arena: Allocator, url: []const u8, port: Port) Allocator.Error!?[]const u8 {
-    if (!validUrl(url)) return try arena.print("TOKEN_URL must be an https:// URL (or http://localhost:<port> or http://127.0.0.1:<port>), not {s}", .{url});
+/// Why a shared token can't work on `port`, if it can't.
+fn wrongPort(arena: Allocator, port: Port) Allocator.Error!?[]const u8 {
     switch (port) {
         .bad => |why| return try arena.print("{s}, and the shared developer token works only on port {d}", .{ why, shared_port }),
         .ok => |p| if (p != shared_port) return try arena.print(
@@ -351,20 +359,6 @@ fn fetch(transport: apple.Transport, arena: Allocator, url: []const u8) anyerror
     return transport.get(arena, url, &.{});
 }
 
-/// https to any host, or plain http to this machine (`wrangler dev`). Parsed the way std.http
-/// parses it, so the host checked is the one it connects to; user info is refused.
-fn validUrl(url: []const u8) bool {
-    const uri = std.Uri.parse(url) catch return false;
-    if (uri.user != null or uri.password != null) return false;
-    const host = switch (uri.host orelse return false) {
-        .raw, .percent_encoded => |h| h,
-    };
-    if (host.len == 0 or std.mem.findScalar(u8, host, '%') != null) return false;
-    if (std.mem.eql(u8, uri.scheme, "https")) return true;
-    if (!std.mem.eql(u8, uri.scheme, "http")) return false;
-    return std.mem.eql(u8, host, "localhost") or std.mem.eql(u8, host, "127.0.0.1");
-}
-
 /// The first line of the service's answer, at most 120 bytes, printable ASCII only.
 fn said(body: []const u8) []const u8 {
     const line = config.trimSpace(body[0 .. std.mem.findScalar(u8, body, '\n') orelse body.len]);
@@ -377,18 +371,18 @@ pub const Env = struct {
     io: Io,
     config_dir: []const u8,
     ids: ?developer_token.Ids,
-    url: ?[]const u8,
+    url: Url,
     port: Port,
     transport: apple.Transport,
     now: i64,
 
-    pub fn fromSettings(io: Io, config_dir: []const u8, s: *const settings.Settings, transport: apple.Transport, now: i64) Env {
+    pub fn fromSettings(io: Io, config_dir: []const u8, settings: *const settings_mod.Settings, transport: apple.Transport, now: i64) Env {
         return .{
             .io = io,
             .config_dir = config_dir,
-            .ids = s.ids(),
-            .url = s.token_url,
-            .port = s.port,
+            .ids = settings.ids(),
+            .url = settings.token_url,
+            .port = settings.port,
             .transport = transport,
             .now = now,
         };
@@ -514,7 +508,7 @@ const t0: i64 = 1_800_000_000;
 const test_url = "https://am-token.example.workers.dev/token";
 
 fn baseInput() Input {
-    return .{ .ids = null, .own = null, .kept = .{}, .url = test_url, .port = .{ .ok = 47823 }, .now = t0, .env_path = "/home/u/.config/am/env" };
+    return .{ .ids = null, .own = null, .kept = .{}, .url = .{ .ok = test_url }, .port = .{ .ok = 47823 }, .now = t0, .env_path = "/home/u/.config/am/env" };
 }
 
 fn keptFrom(token: []const u8) Kept {
@@ -724,7 +718,7 @@ test "no TOKEN_URL: the own token's problem, or what to set when neither is" {
     const a = arena.allocator();
     var service: FakeService = .{};
     var in = baseInput();
-    in.url = null;
+    in.url = .{ .ok = null };
     in.kept = keptFrom(try fakeToken(a, "SHARED", "TEAM", t0 + 6 * day));
     const nothing = (try choose(a, testing.io, in, service.transport())).result.problem;
     try testing.expect(nothing.nothing_set);
@@ -766,33 +760,24 @@ test "AM_PORT matters only for the shared token: another port or a bad value sto
     }
 }
 
-test "TOKEN_URL must be https (or http to this machine), checked on the parsed host" {
+test "a bad TOKEN_URL is why there is no shared token, after the own token's problem, and nothing is downloaded" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     var service: FakeService = .{};
     var in = baseInput();
-    const bad = [_][]const u8{
-        "http://am-token.example.workers.dev/token",
-        "ftp://x",
-        "https://",
-        "am-token.example.workers.dev",
-        // User info before a remote host: the prefix looks local, the host isn't.
-        "http://localhost:@evil.example/token",
-        "http://127.0.0.1:8787@evil.example/token",
-        "https://user:pass@am-token.example.workers.dev/token",
-        "http://localhost.evil.example/token",
-        "http://%6cocalhost/token",
-    };
-    for (bad) |url| {
-        in.url = url;
-        const p = (try choose(a, testing.io, in, service.transport())).result.problem;
-        try testing.expect(std.mem.startsWith(u8, p.text, "TOKEN_URL must be an https:// URL"));
-    }
+    in.url = .{ .bad = "TOKEN_URL must be an https:// URL (or http://localhost:<port> or http://127.0.0.1:<port>), not ftp://x" };
+    try testing.expectEqualStrings(
+        "TOKEN_URL must be an https:// URL (or http://localhost:<port> or http://127.0.0.1:<port>), not ftp://x",
+        (try choose(a, testing.io, in, service.transport())).result.problem.text,
+    );
+    in.ids = .{ .team_id = "TEAM", .key_id = "KEY" };
+    const problem_text = (try choose(a, testing.io, in, service.transport())).result.problem.text;
+    try testing.expect(std.mem.startsWith(u8, problem_text, "developer token missing"));
+    try testing.expect(std.mem.endsWith(u8, problem_text, "; and TOKEN_URL must be an https:// URL (or http://localhost:<port> or http://127.0.0.1:<port>), not ftp://x"));
+    const renewal = try renewChoice(a, testing.io, in, "refused", service.transport());
+    try testing.expectEqual(null, renewal.token);
     try testing.expectEqual(@as(usize, 0), service.requests);
-    try testing.expect(validUrl("http://localhost:8787/token"));
-    try testing.expect(validUrl("http://127.0.0.1:8787/token"));
-    try testing.expect(validUrl("https://am-token.example.workers.dev/token"));
 }
 
 test "renewing after Apple refused a shared token: a fresh download once, kept with its URL" {
@@ -879,7 +864,7 @@ test "renewing respects the backoff, notes a failure, and leaves the user's own 
     in.own = refused;
     try testing.expectEqual(null, (try renewChoice(a, testing.io, in, refused, service.transport())).token);
     in = baseInput();
-    in.url = null;
+    in.url = .{ .ok = null };
     try testing.expectEqual(null, (try renewChoice(a, testing.io, in, refused, service.transport())).token);
     in = baseInput();
     in.port = .{ .ok = 48000 };
@@ -930,7 +915,7 @@ test "get keeps a downloaded token with its URL in a private file, and reads it 
 
     const fresh = try fakeToken(a, "SHARED", "TEAM", t0 + 7 * day);
     var service: FakeService = .{ .response = .{ .status = 200, .body = fresh } };
-    const env: Env = .{ .io = io, .config_dir = dir, .ids = null, .url = test_url, .port = .{ .ok = 47823 }, .transport = service.transport(), .now = t0 };
+    const env: Env = .{ .io = io, .config_dir = dir, .ids = null, .url = .{ .ok = test_url }, .port = .{ .ok = 47823 }, .transport = service.transport(), .now = t0 };
     try testing.expectEqualStrings(fresh, (try get(a, env)).found.token);
     const kept = try tmp.dir.readFileAlloc(io, config.file.shared_developer_token, a, .limited(4096));
     try testing.expectEqualDeep(Kept{ .token = fresh, .url = test_url }, Kept.parse(kept));
@@ -963,7 +948,7 @@ test "a refused own token is never renewed or replaced: no download, no replacem
     try tmp.dir.writeFile(io, .{ .sub_path = config.file.developer_token, .data = own });
     var service: FakeService = .{ .response = .{ .status = 200, .body = try fakeToken(a, "SHARED", "TEAM", 4_000_000_000) } };
     var renewer: Renewer = .{
-        .env = .{ .io = io, .config_dir = dir, .ids = .{ .team_id = "TEAM", .key_id = "KEY" }, .url = test_url, .port = .{ .ok = 47823 }, .transport = service.transport(), .now = 0 },
+        .env = .{ .io = io, .config_dir = dir, .ids = .{ .team_id = "TEAM", .key_id = "KEY" }, .url = .{ .ok = test_url }, .port = .{ .ok = 47823 }, .transport = service.transport(), .now = 0 },
         .arena = a,
     };
     const r = renewer.renew();
@@ -988,7 +973,7 @@ test "a Renewer remembers what it replaced, so later requests send the newer tok
     const new = try fakeToken(a, "NEWKEY", "TEAM", 4_000_000_000);
     var service: FakeService = .{ .response = .{ .status = 200, .body = new } };
     var renewer: Renewer = .{
-        .env = .{ .io = io, .config_dir = dir, .ids = null, .url = test_url, .port = .{ .ok = 47823 }, .transport = service.transport(), .now = 0 },
+        .env = .{ .io = io, .config_dir = dir, .ids = null, .url = .{ .ok = test_url }, .port = .{ .ok = 47823 }, .transport = service.transport(), .now = 0 },
         .arena = a,
     };
     const r = renewer.renew();

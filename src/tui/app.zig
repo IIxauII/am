@@ -224,7 +224,6 @@ pub const App = struct {
     gpa: Allocator,
     environ: *const std.process.Environ.Map,
     config_dir: []const u8,
-    settings: *const settings_mod.Settings,
 
     terminal: term.Terminal,
     screen: screen_mod.Screen,
@@ -318,7 +317,6 @@ pub const App = struct {
             .gpa = o.gpa,
             .environ = o.environ,
             .config_dir = o.config_dir,
-            .settings = o.settings,
             .terminal = undefined,
             .screen = undefined,
             .color = screen_mod.colorMode(o.environ),
@@ -2350,7 +2348,7 @@ const Poison = struct {
     }
 };
 
-test "the TUI logs to AM_TUI_LOG, which may come from the env file" {
+test "the TUI logs to the file AM_TUI_LOG names" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -2359,8 +2357,7 @@ test "the TUI logs to AM_TUI_LOG, which may come from the env file" {
     var buf: [Io.Dir.max_path_bytes]u8 = undefined;
     const dir = buf[0..try tmp.dir.realPath(testing.io, &buf)];
     var environ: std.process.Environ.Map = .init(a);
-    const env_file = try a.print("AM_TUI_LOG={s}\n", .{try Io.Dir.path.join(a, &.{ dir, "tui.log" })});
-    const settings = try settings_mod.parse(a, &environ, env_file);
+    const settings: settings_mod.Settings = .{ .tui_log = try Io.Dir.path.join(a, &.{ dir, "tui.log" }) };
     const app = try App.create(.{ .io = testing.io, .gpa = testing.allocator, .environ = &environ, .config_dir = dir, .settings = &settings, .port = 1 });
     defer app.destroy();
     app.log.print("ready, storefront {s}", .{"gb"});

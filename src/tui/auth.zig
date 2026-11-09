@@ -435,7 +435,7 @@ fn developer(arena: Allocator, team: ?[]const u8, key: ?[]const u8, own: ?[]cons
         .ids = ids,
         .own = own,
         .kept = .{ .token = kept, .url = if (kept != null) test_service else null },
-        .url = if (kept != null) test_service else null,
+        .url = .{ .ok = if (kept != null) test_service else null },
         .port = .{ .ok = 47823 },
         .now = 1_800_000_000,
         .env_path = "/home/u/.config/am/env",

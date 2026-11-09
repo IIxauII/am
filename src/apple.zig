@@ -6,7 +6,7 @@ const Io = std.Io;
 
 pub const base_url = "https://api.music.apple.com";
 
-/// The engine page's origin on the default port (`daemon.default_port`), sent as the Origin
+/// The engine page's origin on the default port (`settings.default_port`), sent as the Origin
 /// header of every request to Apple. Apple accepts a token with an `origin` claim (the shared
 /// developer token, SETUP.md section 6) only from an origin the claim lists; a token without
 /// one doesn't look at the header.

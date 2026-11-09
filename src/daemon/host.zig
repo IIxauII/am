@@ -23,7 +23,8 @@ pub const Host = struct {
     page: engine_page.Page,
     /// The cancel generation of plays and stops.
     plays: *Plays,
-    /// What the daemon's settings ignore (`settings.Settings.warnings`), for `am doctor`.
+    /// The warnings about the settings the daemon runs with (`settings.Settings.warnings`), for
+    /// `am doctor`.
     settings_warnings: []const []const u8 = &.{},
 
     /// What a page call can fail with: no page, a page gone or silent, a shutdown.

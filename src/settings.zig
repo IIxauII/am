@@ -35,8 +35,9 @@ const all_names = names: {
     break :names text ++ " and " ++ names[names.len - 1];
 };
 
-/// A setting whose bad value the daemon refuses to start with: the value, or why it can't be
-/// used.
+/// A setting's value, or why it can't be used. Whatever needs it refuses to go on: the daemon
+/// doesn't start without AM_PORT, ENGINE and ENGINE_IDLE_MINUTES (`daemonStart`), and the shared
+/// developer token needs TOKEN_URL.
 pub fn Checked(comptime T: type) type {
     return union(enum) {
         ok: T,
@@ -71,7 +72,8 @@ pub const Images = enum {
     off,
 };
 
-/// What am runs with, one field per setting. Each process reads the fields it needs.
+/// What am runs with: a field per setting, and the warnings about them. Each process reads the
+/// fields it needs.
 pub const Settings = struct {
     /// `AM_PORT`: the background process's port.
     port: Checked(u16) = .{ .ok = default_port },
@@ -92,9 +94,10 @@ pub const Settings = struct {
     team_id: ?[]const u8 = null,
     /// `KEY_ID`: the ID of the user's MusicKit key.
     key_id: ?[]const u8 = null,
-    /// `TOKEN_URL`: the shared developer token's service. Null when `TOKEN_URL=` (empty) in the
-    /// env file turns it off; an empty environment variable counts as unset.
-    token_url: ?[]const u8 = default_token_url,
+    /// `TOKEN_URL`: the shared developer token's service: https, or plain http to this machine
+    /// (`wrangler dev`). Null when `TOKEN_URL=` (empty) in the env file turns it off; an empty
+    /// environment variable counts as unset.
+    token_url: Checked(?[]const u8) = .{ .ok = default_token_url },
     /// `AM_IMAGES`.
     images: Images = .auto,
     /// `AM_TUI_LOG`: the file the TUI writes what it does to (never tokens), for debugging.
@@ -108,14 +111,22 @@ pub const Settings = struct {
         return .{ .team_id = s.team_id orelse return null, .key_id = s.key_id orelse return null };
     }
 
-    /// Why the daemon doesn't start with these settings: the first of AM_PORT, ENGINE and
-    /// ENGINE_IDLE_MINUTES with a bad value. When null, all three are `ok`.
-    pub fn refusal(s: *const Settings) ?[]const u8 {
-        inline for (.{ s.port, s.engine, s.engine_idle_minutes }) |setting| switch (setting) {
-            .ok => {},
-            .bad => |why| return why,
+    /// What the daemon doesn't start without, or why it doesn't start: the first of AM_PORT,
+    /// ENGINE and ENGINE_IDLE_MINUTES with a bad value.
+    pub fn daemonStart(s: *const Settings) Checked(Start) {
+        const port = switch (s.port) {
+            .ok => |p| p,
+            .bad => |why| return .{ .bad = why },
         };
-        return null;
+        const kind = switch (s.engine) {
+            .ok => |k| k,
+            .bad => |why| return .{ .bad = why },
+        };
+        const idle_minutes = switch (s.engine_idle_minutes) {
+            .ok => |m| m,
+            .bad => |why| return .{ .bad = why },
+        };
+        return .{ .ok = .{ .port = port, .engine = kind, .idle_minutes = idle_minutes } };
     }
 
     /// FIREFOX_PATH or CHROME_PATH.
@@ -125,6 +136,13 @@ pub const Settings = struct {
             .chrome => s.chrome_path,
         };
     }
+};
+
+/// AM_PORT, ENGINE and ENGINE_IDLE_MINUTES, all good: what the daemon starts with.
+pub const Start = struct {
+    port: u16,
+    engine: engine.Kind,
+    idle_minutes: u32,
 };
 
 /// The setting that says where the `kind` browser is.
@@ -147,9 +165,9 @@ pub fn parse(arena: Allocator, environ: *const Environ.Map, env_file: ?[]const u
     const source: Source = .{ .environ = environ, .file = try parseEnvFile(arena, env_file orelse "", platform.homeDir(environ)) };
     var warnings: std.ArrayList([]const u8) = .empty;
     var s: Settings = .{};
-    if (source.get(.AM_PORT)) |v| s.port = if (port(v)) |p| .{ .ok = p } else .{ .bad = try arena.print("AM_PORT must be a port number (1-65535), not {s}", .{v}) };
+    if (source.get(.AM_PORT)) |v| s.port = if (parsePositive(u16, v)) |p| .{ .ok = p } else .{ .bad = try arena.print("AM_PORT must be a port number (1-65535), not {s}", .{v}) };
     if (source.get(.ENGINE)) |v| s.engine = if (std.meta.stringToEnum(engine.Kind, v)) |k| .{ .ok = k } else .{ .bad = try arena.print("ENGINE must be firefox or chrome, not {s}", .{v}) };
-    if (source.get(.ENGINE_IDLE_MINUTES)) |v| s.engine_idle_minutes = if (minutes(v)) |m| .{ .ok = m } else .{ .bad = try arena.print("ENGINE_IDLE_MINUTES must be a whole number of minutes (1 or more), not {s}", .{v}) };
+    if (source.get(.ENGINE_IDLE_MINUTES)) |v| s.engine_idle_minutes = if (parsePositive(u32, v)) |m| .{ .ok = m } else .{ .bad = try arena.print("ENGINE_IDLE_MINUTES must be a whole number of minutes (1 or more), not {s}", .{v}) };
     if (source.get(.ENGINE_HEADLESS)) |v| {
         if (std.mem.eql(u8, v, "0")) {
             s.engine_headless = false;
@@ -170,9 +188,14 @@ pub fn parse(arena: Allocator, environ: *const Environ.Map, env_file: ?[]const u
     s.key_id = source.get(.KEY_ID);
     if (source.get(.TOKEN_URL)) |v| {
         const url = config.trimSpace(v);
-        s.token_url = if (url.len == 0) null else url;
+        s.token_url = if (url.len == 0)
+            .{ .ok = null }
+        else if (validTokenUrl(url))
+            .{ .ok = url }
+        else
+            .{ .bad = try arena.print("TOKEN_URL must be an https:// URL (or http://localhost:<port> or http://127.0.0.1:<port>), not {s}", .{url}) };
     }
-    if (source.get(.AM_IMAGES)) |v| s.images = images(v);
+    if (source.get(.AM_IMAGES)) |v| s.images = parseImages(v);
     s.tui_log = source.get(.AM_TUI_LOG);
     // Only the env file's keys: the environment holds unrelated variables, and the env file's
     // lines never reach the engine's environment.
@@ -193,21 +216,31 @@ const Source = struct {
     }
 };
 
-fn port(value: []const u8) ?u16 {
-    const p = std.fmt.parseInt(u16, value, 10) catch return null;
-    return if (p == 0) null else p;
+/// A whole number, 1 or more.
+fn parsePositive(comptime T: type, value: []const u8) ?T {
+    const n = std.fmt.parseInt(T, value, 10) catch return null;
+    return if (n == 0) null else n;
 }
 
 /// Any letter case; `none` is `off`, and anything else is `auto`.
-fn images(value: []const u8) Images {
+fn parseImages(value: []const u8) Images {
     if (std.ascii.eqlIgnoreCase(value, "none")) return .off;
     for (std.enums.values(Images)) |i| if (std.ascii.eqlIgnoreCase(value, @tagName(i))) return i;
     return .auto;
 }
 
-fn minutes(value: []const u8) ?u32 {
-    const m = std.fmt.parseInt(u32, value, 10) catch return null;
-    return if (m == 0) null else m;
+/// https to any host, or plain http to this machine (`wrangler dev`). Parsed the way std.http
+/// parses it, so the host checked is the one it connects to; user info is refused.
+fn validTokenUrl(url: []const u8) bool {
+    const uri = std.Uri.parse(url) catch return false;
+    if (uri.user != null or uri.password != null) return false;
+    const host = switch (uri.host orelse return false) {
+        .raw, .percent_encoded => |h| h,
+    };
+    if (host.len == 0 or std.mem.findScalar(u8, host, '%') != null) return false;
+    if (std.mem.eql(u8, uri.scheme, "https")) return true;
+    if (!std.mem.eql(u8, uri.scheme, "http")) return false;
+    return std.mem.eql(u8, host, "localhost") or std.mem.eql(u8, host, "127.0.0.1");
 }
 
 /// Parses env-file text. `home` expands a leading `~`. Allocates into `arena`.
@@ -264,7 +297,7 @@ test "parse: every setting's default, a junk value, the environment over the env
             .chrome_path = null,
             .team_id = null,
             .key_id = null,
-            .token_url = "https://am-token.xauyxau.workers.dev/token",
+            .token_url = .{ .ok = "https://am-token.xauyxau.workers.dev/token" },
             .images = .auto,
             .tui_log = null,
             .warnings = &.{},
@@ -294,9 +327,10 @@ test "parse: every setting's default, a junk value, the environment over the env
         .{ .environ = &.{.{ "HOME", "/home/u" }}, .file = "FIREFOX_PATH=~/bin/firefox\nCHROME_PATH=/opt/chrome\n", .want = .{ .firefox_path = "/home/u/bin/firefox", .chrome_path = "/opt/chrome" } },
         .{ .file = "TEAM_ID=TEAM123456\n", .want = .{ .team_id = "TEAM123456" } },
         .{ .file = "KEY_ID=KEY1234567\n", .want = .{ .key_id = "KEY1234567" } },
-        .{ .file = "TOKEN_URL= https://x.example/token \n", .want = .{ .token_url = "https://x.example/token" } },
+        .{ .file = "TOKEN_URL= https://x.example/token \n", .want = .{ .token_url = .{ .ok = "https://x.example/token" } } },
         // Empty turns the shared token off.
-        .{ .file = "TOKEN_URL=\n", .want = .{ .token_url = null } },
+        .{ .file = "TOKEN_URL=\n", .want = .{ .token_url = .{ .ok = null } } },
+        .{ .file = "TOKEN_URL=ftp://x\n", .want = .{ .token_url = .{ .bad = "TOKEN_URL must be an https:// URL (or http://localhost:<port> or http://127.0.0.1:<port>), not ftp://x" } } },
         .{ .file = "AM_IMAGES=kitty\n", .want = .{ .images = .kitty } },
         .{ .file = "AM_IMAGES=Placeholders\n", .want = .{ .images = .placeholders } },
         .{ .file = "AM_IMAGES=placements\n", .want = .{ .images = .placements } },
@@ -339,7 +373,7 @@ test "parse: every setting's default, a junk value, the environment over the env
                 .chrome_path = "/env/chrome",
                 .team_id = "ENVTEAM",
                 .key_id = "ENVKEY",
-                .token_url = "https://env.example/token",
+                .token_url = .{ .ok = "https://env.example/token" },
                 .images = .blocks,
                 .tui_log = "/env/tui.log",
             },
@@ -363,11 +397,46 @@ test "parse: every setting's default, a junk value, the environment over the env
     }
 }
 
-test "the daemon refuses to start over a bad AM_PORT, ENGINE or ENGINE_IDLE_MINUTES, the first of them" {
-    try testing.expectEqual(null, (Settings{ .warnings = &.{"a warning"} }).refusal());
-    try testing.expectEqualStrings("ENGINE is bad", (Settings{ .engine = .{ .bad = "ENGINE is bad" } }).refusal().?);
-    try testing.expectEqualStrings("idle is bad", (Settings{ .engine_idle_minutes = .{ .bad = "idle is bad" } }).refusal().?);
-    try testing.expectEqualStrings("AM_PORT is bad", (Settings{ .port = .{ .bad = "AM_PORT is bad" }, .engine = .{ .bad = "ENGINE is bad" } }).refusal().?);
+test "the daemon starts with AM_PORT, ENGINE and ENGINE_IDLE_MINUTES, or refuses over the first bad one" {
+    try testing.expectEqualDeep(Checked(Start){ .ok = .{ .port = 48000, .engine = .chrome, .idle_minutes = 9 } }, (Settings{
+        .port = .{ .ok = 48000 },
+        .engine = .{ .ok = .chrome },
+        .engine_idle_minutes = .{ .ok = 9 },
+        // Neither a warning nor a bad TOKEN_URL stops it.
+        .token_url = .{ .bad = "TOKEN_URL is bad" },
+        .warnings = &.{"a warning"},
+    }).daemonStart());
+    try testing.expectEqualStrings("ENGINE is bad", (Settings{ .engine = .{ .bad = "ENGINE is bad" } }).daemonStart().bad);
+    try testing.expectEqualStrings("idle is bad", (Settings{ .engine_idle_minutes = .{ .bad = "idle is bad" } }).daemonStart().bad);
+    try testing.expectEqualStrings("AM_PORT is bad", (Settings{ .port = .{ .bad = "AM_PORT is bad" }, .engine = .{ .bad = "ENGINE is bad" } }).daemonStart().bad);
+}
+
+test "TOKEN_URL must be https (or http to this machine), checked on the parsed host" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var environ: Environ.Map = .init(a);
+    const bad = [_][]const u8{
+        "http://am-token.example.workers.dev/token",
+        "ftp://x",
+        "https://",
+        "am-token.example.workers.dev",
+        // User info before a remote host: the prefix looks local, the host isn't.
+        "http://localhost:@evil.example/token",
+        "http://127.0.0.1:8787@evil.example/token",
+        "https://user:pass@am-token.example.workers.dev/token",
+        "http://localhost.evil.example/token",
+        "http://%6cocalhost/token",
+    };
+    for (bad) |url| {
+        errdefer std.debug.print("{s}\n", .{url});
+        const s = try parse(a, &environ, try a.print("TOKEN_URL={s}\n", .{url}));
+        try testing.expectEqualStrings(try a.print("TOKEN_URL must be an https:// URL (or http://localhost:<port> or http://127.0.0.1:<port>), not {s}", .{url}), s.token_url.bad);
+    }
+    for ([_][]const u8{ "http://localhost:8787/token", "http://127.0.0.1:8787/token", "https://am-token.example.workers.dev/token" }) |url| {
+        try testing.expectEqualStrings(url, (try parse(a, &environ, try a.print("TOKEN_URL={s}\n", .{url}))).token_url.ok.?);
+    }
+    try testing.expect(validTokenUrl(default_token_url));
 }
 
 test "the developer token's ids: TEAM_ID and KEY_ID, both or none" {

@@ -2,8 +2,8 @@
 //! MusicKit's exact EME config, `browserSupportsVideoDrm`, the Music User Token, MusicKit's
 //! authorization and the subscription. Each check prints ✔, ✘ or ?, as in the Node POC. The
 //! engine page module (`engine_page.zig`) makes the repairs; doctor asks it to repair the page if
-//! idle and reports what came back. Before all that, it warns about the settings the daemon
-//! runs with that it ignores.
+//! idle and reports what came back. Before all that come the warnings about the settings the
+//! daemon runs with: values and env-file keys am ignores.
 const std = @import("std");
 const engine_page = @import("engine_page.zig");
 const host_mod = @import("host.zig");
@@ -181,7 +181,7 @@ test "a rejected Music User Token, or one that couldn't be checked, says so, and
     }
 }
 
-test "doctor starts with what the daemon's settings ignore, then checks as always" {
+test "doctor starts with the warnings about the daemon's settings, then checks as always" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
