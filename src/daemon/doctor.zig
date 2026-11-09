@@ -87,8 +87,9 @@ pub fn run(host: Host, r: *Reply) Reply.Error!void {
 fn settingsWarnings(host: Host, r: *Reply) Reply.Error!void {
     const now = try host.settingsWarningsNow(r.arena);
     for (host.settings_warnings) |warning| {
-        const fixed = if (now) |n| !contains(n, warning) else false;
-        try r.print("warning: {s}{s}\n", .{ warning, if (fixed) " (fixed in the env file since the daemon started: `am daemon stop` applies it)" else "" });
+        // Gone, or now about another value (`false` became `true`, also bad): changed, not fixed.
+        const changed = if (now) |n| !contains(n, warning) else false;
+        try r.print("warning: {s}{s}\n", .{ warning, if (changed) " (changed in the env file since the daemon started, which reads it only when it starts)" else "" });
     }
     for (now orelse &.{}) |warning| if (!contains(host.settings_warnings, warning))
         try r.print("warning: {s} (new in the env file since the daemon started, which reads it only when it starts)\n", .{warning});
@@ -215,7 +216,7 @@ test "doctor starts with the warnings about the daemon's settings, then checks a
     ));
 }
 
-test "doctor says which warnings the env file fixed or gained since the daemon started" {
+test "doctor says which warnings the env file changed or gained since the daemon started" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -225,7 +226,7 @@ test "doctor says which warnings the env file fixed or gained since the daemon s
         .settings_warnings_now = &.{ "FIREFOX_WIDEVINE in the environment must be google …", "ENGINE_IDEL_MINUTES in the env file isn't a setting …" },
     };
     try testing.expect(std.mem.startsWith(u8, try runDoctor(&f, a),
-        \\warning: ENGINE_HEADLESS in the env file must be 0 … (fixed in the env file since the daemon started: `am daemon stop` applies it)
+        \\warning: ENGINE_HEADLESS in the env file must be 0 … (changed in the env file since the daemon started, which reads it only when it starts)
         \\warning: FIREFOX_WIDEVINE in the environment must be google …
         \\warning: ENGINE_IDEL_MINUTES in the env file isn't a setting … (new in the env file since the daemon started, which reads it only when it starts)
         \\engine: chrome (headless), pid 4242 (already running)

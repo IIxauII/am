@@ -116,7 +116,8 @@ A setting applies when the process that uses it starts:
 - The background process (`am daemon`) reads `AM_PORT`, `ENGINE`, `ENGINE_IDLE_MINUTES`,
   `ENGINE_HEADLESS`, `FIREFOX_WIDEVINE`, `FIREFOX_PATH`, `CHROME_PATH`, `TEAM_ID`, `KEY_ID` and
   `TOKEN_URL` once. After changing one, run `am daemon stop`; the next command starts it again.
-- The TUI reads `AM_IMAGES` and `AM_TUI_LOG` when it opens.
+- The TUI reads `AM_IMAGES` and `AM_TUI_LOG` when it opens, and `TEAM_ID`, `KEY_ID` and
+  `TOKEN_URL` each time it checks the tokens.
 - Every other `am` command (`am token`, `am search` …) reads `AM_PORT`, `TEAM_ID`, `KEY_ID` and
   `TOKEN_URL` each time it runs.
 

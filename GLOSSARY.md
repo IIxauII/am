@@ -68,5 +68,5 @@ A choice about how am runs (`ENGINE`, `AM_IMAGES` …), read from the environmen
 _Avoid_: option, config value
 
 **Env file**:
-The NAME=value file `env` in am's config directory that holds settings.
+The KEY=VALUE file `env` in am's config directory that holds settings.
 _Avoid_: config file, dotenv
