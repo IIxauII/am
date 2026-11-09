@@ -21,7 +21,7 @@ Context: https://github.com/IIxauII/am/tree/research/portable-keys/research/port
 - Terminals: Linux Ctrl+Shift shortcuts, zoom keys, Ctrl+Tab, Alt+Enter, Shift+PgUp/PgDn in four, GNOME Terminal's F10, Windows Terminal's defaults, tmux's prefix; some only with several tabs or a selection. Desktops: Alt+Tab, Alt+Space, Super, GNOME's Alt+Esc, KDE's Ctrl+F1–F4. *Source*.
 
 **Collisions and naming**
-- Recorded as Tab: Ctrl+i. Enter: Ctrl+m, Ctrl+j. Backspace: Ctrl+h, Ctrl+Backspace, Ctrl+8. Esc: Ctrl+[, Ctrl+3. `ctrl+space`: Ctrl+2, Ctrl+@. `ctrl+_`: Ctrl+/, Ctrl+7. Ctrl+a: Ctrl+Shift+a. Space: Shift+Space. *Measured*.
+- Most terminals record as Tab: Ctrl+i. Enter: Ctrl+m, Ctrl+j. Backspace: Ctrl+h, Ctrl+Backspace, Ctrl+8. Esc: Ctrl+[, Ctrl+3. `ctrl+space`: Ctrl+2, Ctrl+@. `ctrl+_`: Ctrl+/, Ctrl+7. Ctrl+a: Ctrl+Shift+a. Space: Shift+Space. *Measured*.
 - Inside tmux, every terminal falls back to this set. *Source*.
 - One key, several names: Alt+Shift+a is `alt+A` without a protocol and `alt+shift+a` under kitty's; Ctrl+Shift+a is `ctrl+a`, `ctrl+shift+a` or `ctrl+shift+A`. Super decodes as Alt. *Measured*.
 
