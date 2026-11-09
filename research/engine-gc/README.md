@@ -204,6 +204,10 @@ fires, from source: [source-gc.md §5](source-gc.md#5-why-the-idle-parent-never-
 - The first launch script was stopped by a tool timeout, which also killed the first `ws` daemon and relay; both
   were restarted at 11:44–11:47 (ws reported from 11:48). Reports at t10 and later are unaffected.
 - Footprint per minute right after a report or GC is not growth (freed pages get reused first); use the reports.
+- At 11:50 an extra daemon of the ws build started on am's default config dir and port instead of a research
+  one, with the research environment otherwise (Firefox copy, logging). It ran an engine on that profile for
+  10 min and exited on the 5-min idle rule; ffwrap.sh appended log.prefs to that profile's `user.js`. What started
+  it was not found: every command of the run set `AM_CONFIG_DIR` and `AM_PORT`. It touched no research instance.
 - One run, about 2 h. Beyond 2 h idle and 6 min playing is *inferred*.
 
 ## Files

@@ -10,7 +10,8 @@ Measured on macOS 26.2 (Apple M4) with Firefox 159.0.1: eleven instances side by
 logging, plus two 6-min playing trials at volume 0. Source citations are at tag `FIREFOX_159_0_1_RELEASE`.
 
 **Why no GC/CC.**
-- Every engine's parent GC'd at startup and once more 5 min later, then not again for 60–80 min while it grew.
+- Every engine's parent GC'd at startup (netproc's not until 5 min) and once more 5 min after start, then not
+  again for 60–80 min while it grew.
   That one is `USER_INACTIVE`, which fires once per process because input never comes. The CC ran every ~2 min
   and freed a few dozen objects each time. *Measured* with `javascript.options.mem.log` +
   `MOZ_LOG=PageMessages:5`, `JS_GC_PROFILE=0` and `MOZ_GCTIMER=stderr` (all work in release; give them `stderr`,
@@ -32,8 +33,8 @@ logging, plus two 6-min playing trials at volume 0. Source citations are at tag 
   - A CC can't free objects held by wrappers made since the last GC
     ([nsCycleCollector.cpp#L2016-L2023](https://github.com/mozilla-firefox/firefox/blob/FIREFOX_159_0_1_RELEASE/xpcom/base/nsCycleCollector.cpp#L2016-L2023)).
 - What GC'd them in the end was Firefox's own Remote Settings work. Every warm-profile engine with default GC
-  prefs got a `TOO_MUCH_MALLOC` GC between 13:02 and 13:16, after Firefox had left multi-MiB `ArrayBuffer`s in its JS, and
-  that GC freed am's garbage too. A bare Firefox with a fresh profile had no GC from 11:50 to 13:50. *Measured.*
+  prefs got a `TOO_MUCH_MALLOC` GC between 13:02 and 13:16, after Firefox had left multi-MiB `ArrayBuffer`s in
+  its JS, and that GC freed am's garbage too. A bare Firefox with a fresh profile had no GC from 11:50 to 13:50. *Measured.*
 - A forced GC plus a CC, without memory-pressure (the debug FIFO's `gc log`), took stock's parent
   heap-unclassified from 111 to 78 MiB and its web heap from 34 to 9 MiB. A "minimize" afterwards freed only
   1–2 MiB more of those. A CC alone freed nothing. *Measured.*
@@ -91,8 +92,8 @@ logging, plus two 6-min playing trials at volume 0. Source citations are at tag 
     bundle. It ran with push off too.
   - A push broadcast (server version from 12:35) made the warm engines sync `url-classifier-exceptions` around
     12:55.
-  - The parent gained an 18.5 MiB `ArrayBuffer` (likely the earlier research's 16.8 MiB one), 9 MiB of strings and 7 MiB
-    of objects.
+  - The parent gained an 18.5 MiB `ArrayBuffer` (likely the earlier research's 16.8 MiB one), 9 MiB of strings
+    and 7 MiB of objects.
 - The broadcast is what lines instances up in the same wall-clock minute (*inferred*).
 - It is JS-visible, so it ends in its own GC (*measured*). A bare Firefox with a warm profile grew +54 MiB/h for an
   hour, GC'd at 13:05, then went −4 MiB/h. Fresh profiles grew 3–9 MiB/h.
