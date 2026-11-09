@@ -60,17 +60,14 @@ comptime {
 /// Worker (`am-token`, token-worker/wrangler.toml) on the owner's workers.dev subdomain.
 pub const default_token_url = "https://am-token.xauyxau.workers.dev/token";
 
+comptime {
+    // It goes in unchecked, so check it here, where no build can skip it.
+    @setEvalBranchQuota(10_000);
+    std.debug.assert(validTokenUrl(default_token_url));
+}
+
 /// `AM_IMAGES`: how the TUI draws artwork.
-pub const Images = enum {
-    /// Kitty graphics where the terminal answers the query, else half blocks.
-    auto,
-    /// Kitty graphics, with placeholders where the terminal is known to have them.
-    kitty,
-    placeholders,
-    placements,
-    blocks,
-    off,
-};
+pub const Images = @import("tui/graphics.zig").Images;
 
 /// What am runs with: a field per setting, and the warnings about them. Each process reads the
 /// fields it needs.
@@ -100,10 +97,12 @@ pub const Settings = struct {
     token_url: Checked(?[]const u8) = .{ .ok = default_token_url },
     /// `AM_IMAGES`.
     images: Images = .auto,
-    /// `AM_TUI_LOG`: the file the TUI writes what it does to (never tokens), for debugging.
+    /// `AM_TUI_LOG`: the file the TUI writes what it does to (never tokens), for debugging. It is
+    /// truncated, so the env file must give an absolute path (or `~/…`): a relative one would
+    /// name a different file in each directory am runs in.
     tui_log: ?[]const u8 = null,
-    /// The values am ignores, behaving as if they were unset, and the keys in the env file it
-    /// doesn't know: for `am doctor` and the daemon's log.
+    /// The values am ignores, behaving as if they were unset, and the keys and lines in the env
+    /// file it doesn't understand: for `am doctor` and the daemon's log.
     warnings: []const []const u8 = &.{},
 
     /// TEAM_ID and KEY_ID, when both are set.
@@ -162,24 +161,25 @@ pub fn load(io: Io, arena: Allocator, config_dir: []const u8, environ: *const En
 /// The settings from `environ` and the env file's text (null: there is none). Allocates into
 /// `arena`.
 pub fn parse(arena: Allocator, environ: *const Environ.Map, env_file: ?[]const u8) Allocator.Error!Settings {
-    const source: Source = .{ .environ = environ, .file = try parseEnvFile(arena, env_file orelse "", platform.homeDir(environ)) };
+    const file = try parseEnvFile(arena, env_file orelse "", platform.homeDir(environ));
+    const source: Source = .{ .environ = environ, .file = file.map };
     var warnings: std.ArrayList([]const u8) = .empty;
     var s: Settings = .{};
     if (source.get(.AM_PORT)) |v| s.port = if (parsePositive(u16, v)) |p| .{ .ok = p } else .{ .bad = try arena.print("AM_PORT must be a port number (1-65535), not {s}", .{v}) };
     if (source.get(.ENGINE)) |v| s.engine = if (std.meta.stringToEnum(engine.Kind, v)) |k| .{ .ok = k } else .{ .bad = try arena.print("ENGINE must be firefox or chrome, not {s}", .{v}) };
     if (source.get(.ENGINE_IDLE_MINUTES)) |v| s.engine_idle_minutes = if (parsePositive(u32, v)) |m| .{ .ok = m } else .{ .bad = try arena.print("ENGINE_IDLE_MINUTES must be a whole number of minutes (1 or more), not {s}", .{v}) };
-    if (source.get(.ENGINE_HEADLESS)) |v| {
-        if (std.mem.eql(u8, v, "0")) {
+    if (source.lookup(.ENGINE_HEADLESS)) |v| {
+        if (std.mem.eql(u8, v.text, "0")) {
             s.engine_headless = false;
-        } else if (!std.mem.eql(u8, v, "1")) {
-            try warnings.append(arena, try arena.print("ENGINE_HEADLESS must be 0 (show the engine) or 1 (headless), not \"{s}\": ignored, the engine runs headless", .{v}));
+        } else if (!std.mem.eql(u8, v.text, "1")) {
+            try warnings.append(arena, try arena.print("ENGINE_HEADLESS {s} must be 0 (show the engine) or 1 (headless), not \"{s}\": ignored, the engine runs headless", .{ v.where(), v.text }));
         }
     }
-    if (source.get(.FIREFOX_WIDEVINE)) |v| {
-        if (std.mem.eql(u8, v, "google")) {
+    if (source.lookup(.FIREFOX_WIDEVINE)) |v| {
+        if (std.mem.eql(u8, v.text, "google")) {
             s.widevine_from_google = true;
         } else {
-            try warnings.append(arena, try arena.print("FIREFOX_WIDEVINE must be google (Google's current Widevine) or unset, not \"{s}\": ignored, Firefox keeps Mozilla's Widevine", .{v}));
+            try warnings.append(arena, try arena.print("FIREFOX_WIDEVINE {s} must be google (Google's current Widevine) or unset, not \"{s}\": ignored, Firefox keeps Mozilla's Widevine", .{ v.where(), v.text }));
         }
     }
     s.firefox_path = source.get(.FIREFOX_PATH);
@@ -196,23 +196,51 @@ pub fn parse(arena: Allocator, environ: *const Environ.Map, env_file: ?[]const u
             .{ .bad = try arena.print("TOKEN_URL must be an https:// URL (or http://localhost:<port> or http://127.0.0.1:<port>), not {s}", .{url}) };
     }
     if (source.get(.AM_IMAGES)) |v| s.images = parseImages(v);
-    s.tui_log = source.get(.AM_TUI_LOG);
+    if (source.lookup(.AM_TUI_LOG)) |v| {
+        if (v.from == .env_file and !Io.Dir.path.isAbsolute(v.text)) {
+            try warnings.append(arena, try arena.print("AM_TUI_LOG in the env file must be an absolute path or start with ~/, not \"{s}\": ignored, the TUI doesn't log", .{v.text}));
+        } else {
+            s.tui_log = v.text;
+        }
+    }
     // Only the env file's keys: the environment holds unrelated variables, and the env file's
     // lines never reach the engine's environment.
     for (source.file.keys()) |key| if (std.meta.stringToEnum(Name, key) == null)
         try warnings.append(arena, try arena.print("{s} in the env file isn't a setting: ignored. The settings are " ++ all_names, .{key}));
+    for (file.bad_lines) |line|
+        try warnings.append(arena, try arena.print("\"{s}\" in the env file isn't NAME=value with NAME in capital letters: ignored", .{line}));
     s.warnings = warnings.items;
     return s;
 }
 
-/// Where a setting's value comes from: the environment (an empty variable counts as unset),
-/// else the env file.
+/// Where a setting's value comes from: the environment, else the env file. An empty value
+/// counts as unset, except `TOKEN_URL=` in the env file, which turns the shared token off.
 const Source = struct {
     environ: *const Environ.Map,
     file: Environ.Map,
 
+    const Value = struct {
+        text: []const u8,
+        from: enum { environment, env_file },
+
+        /// For a warning: `in the environment` or `in the env file`.
+        fn where(v: Value) []const u8 {
+            return switch (v.from) {
+                .environment => "in the environment",
+                .env_file => "in the env file",
+            };
+        }
+    };
+
+    fn lookup(s: *const Source, name: Name) ?Value {
+        if (config.getEnv(s.environ, @tagName(name))) |text| return .{ .text = text, .from = .environment };
+        const text = s.file.get(@tagName(name)) orelse return null;
+        if (text.len == 0 and name != .TOKEN_URL) return null;
+        return .{ .text = text, .from = .env_file };
+    }
+
     fn get(s: *const Source, name: Name) ?[]const u8 {
-        return config.getEnv(s.environ, @tagName(name)) orelse s.file.get(@tagName(name));
+        return if (s.lookup(name)) |v| v.text else null;
     }
 };
 
@@ -243,17 +271,39 @@ fn validTokenUrl(url: []const u8) bool {
     return std.mem.eql(u8, host, "localhost") or std.mem.eql(u8, host, "127.0.0.1");
 }
 
-/// Parses env-file text. `home` expands a leading `~`. Allocates into `arena`.
-fn parseEnvFile(arena: Allocator, text: []const u8, home: ?[]const u8) !Environ.Map {
+const EnvFile = struct {
+    map: Environ.Map,
+    /// The lines that are neither blank, a `#` comment nor NAME=value, trimmed: ignored.
+    bad_lines: []const []const u8,
+};
+
+/// Parses env-file text: NAME=value lines, `export NAME=value` as a shell writes them. `home`
+/// expands a leading `~`. Allocates into `arena`.
+fn parseEnvFile(arena: Allocator, text: []const u8, home: ?[]const u8) Allocator.Error!EnvFile {
     var map: Environ.Map = .init(arena);
+    var bad_lines: std.ArrayList([]const u8) = .empty;
     var lines = std.mem.splitScalar(u8, text, '\n');
-    while (lines.next()) |line| {
-        const eq = std.mem.findScalar(u8, line, '=') orelse continue;
-        const key = config.trimSpace(line[0..eq]);
-        if (!isKey(key)) continue;
-        try map.put(key, try expandHome(arena, unquote(config.trimSpace(line[eq + 1 ..])), home));
+    while (lines.next()) |raw| {
+        const line = config.trimSpace(raw);
+        if (line.len == 0 or line[0] == '#') continue;
+        const assignment = withoutExport(line);
+        const eq = std.mem.findScalar(u8, assignment, '=');
+        const key = config.trimSpace(assignment[0 .. eq orelse 0]);
+        if (eq == null or !isKey(key)) {
+            try bad_lines.append(arena, line);
+            continue;
+        }
+        try map.put(key, try expandHome(arena, unquote(config.trimSpace(assignment[eq.? + 1 ..])), home));
     }
-    return map;
+    return .{ .map = map, .bad_lines = bad_lines.items };
+}
+
+/// `NAME=value` from `export NAME=value`.
+fn withoutExport(line: []const u8) []const u8 {
+    const prefix = "export";
+    if (line.len > prefix.len and std.mem.startsWith(u8, line, prefix) and (line[prefix.len] == ' ' or line[prefix.len] == '\t'))
+        return config.trimSpace(line[prefix.len..]);
+    return line;
 }
 
 fn isKey(s: []const u8) bool {
@@ -275,6 +325,9 @@ fn expandHome(arena: Allocator, value: []const u8, home: ?[]const u8) ![]const u
 }
 
 const testing = std.testing;
+
+/// The home directory, as `platform.homeDir` reads it: HOME, or USERPROFILE on Windows.
+const home_environ = [_][2][]const u8{ .{ "HOME", "/home/u" }, .{ "USERPROFILE", "/home/u" } };
 
 const Case = struct {
     /// Environment variables.
@@ -315,16 +368,19 @@ test "parse: every setting's default, a junk value, the environment over the env
         .{ .file = "ENGINE_IDLE_MINUTES=1.5\n", .want = .{ .engine_idle_minutes = .{ .bad = "ENGINE_IDLE_MINUTES must be a whole number of minutes (1 or more), not 1.5" } } },
         .{ .file = "ENGINE_HEADLESS=0\n", .want = .{ .engine_headless = false } },
         .{ .file = "ENGINE_HEADLESS=1\n", .want = .{ .engine_headless = true } },
-        // Ignored as before, now with a warning.
+        // Ignored as before, now with a warning that says where the value is.
         .{ .file = "ENGINE_HEADLESS=false\n", .want = .{ .engine_headless = true, .warnings = &.{
-            "ENGINE_HEADLESS must be 0 (show the engine) or 1 (headless), not \"false\": ignored, the engine runs headless",
+            "ENGINE_HEADLESS in the env file must be 0 (show the engine) or 1 (headless), not \"false\": ignored, the engine runs headless",
+        } } },
+        .{ .environ = &.{.{ "ENGINE_HEADLESS", "false" }}, .want = .{ .engine_headless = true, .warnings = &.{
+            "ENGINE_HEADLESS in the environment must be 0 (show the engine) or 1 (headless), not \"false\": ignored, the engine runs headless",
         } } },
         .{ .file = "FIREFOX_WIDEVINE=google\n", .want = .{ .widevine_from_google = true } },
         .{ .file = "FIREFOX_WIDEVINE=Google\n", .want = .{ .widevine_from_google = false, .warnings = &.{
-            "FIREFOX_WIDEVINE must be google (Google's current Widevine) or unset, not \"Google\": ignored, Firefox keeps Mozilla's Widevine",
+            "FIREFOX_WIDEVINE in the env file must be google (Google's current Widevine) or unset, not \"Google\": ignored, Firefox keeps Mozilla's Widevine",
         } } },
-        // `~` is HOME in the env file.
-        .{ .environ = &.{.{ "HOME", "/home/u" }}, .file = "FIREFOX_PATH=~/bin/firefox\nCHROME_PATH=/opt/chrome\n", .want = .{ .firefox_path = "/home/u/bin/firefox", .chrome_path = "/opt/chrome" } },
+        // `~` is the home directory in the env file.
+        .{ .environ = &home_environ, .file = "FIREFOX_PATH=~/bin/firefox\nCHROME_PATH=/opt/chrome\n", .want = .{ .firefox_path = "/home/u/bin/firefox", .chrome_path = "/opt/chrome" } },
         .{ .file = "TEAM_ID=TEAM123456\n", .want = .{ .team_id = "TEAM123456" } },
         .{ .file = "KEY_ID=KEY1234567\n", .want = .{ .key_id = "KEY1234567" } },
         .{ .file = "TOKEN_URL= https://x.example/token \n", .want = .{ .token_url = .{ .ok = "https://x.example/token" } } },
@@ -339,7 +395,13 @@ test "parse: every setting's default, a junk value, the environment over the env
         .{ .file = "AM_IMAGES=none\n", .want = .{ .images = .off } },
         // Anything else is automatic, as before.
         .{ .file = "AM_IMAGES=nonsense\n", .want = .{ .images = .auto } },
-        .{ .environ = &.{.{ "HOME", "/home/u" }}, .file = "AM_TUI_LOG=~/am-tui.log\n", .want = .{ .tui_log = "/home/u/am-tui.log" } },
+        .{ .environ = &home_environ, .file = "AM_TUI_LOG=~/am-tui.log\n", .want = .{ .tui_log = "/home/u/am-tui.log" } },
+        // A relative AM_TUI_LOG in the env file would truncate a file wherever am runs; in the
+        // environment, it is the shell's own directory.
+        .{ .file = "AM_TUI_LOG=notes.txt\n", .want = .{ .tui_log = null, .warnings = &.{
+            "AM_TUI_LOG in the env file must be an absolute path or start with ~/, not \"notes.txt\": ignored, the TUI doesn't log",
+        } } },
+        .{ .environ = &.{.{ "AM_TUI_LOG", "notes.txt" }}, .want = .{ .tui_log = "notes.txt" } },
         // The environment wins over the env file, for every setting.
         .{
             .environ = &.{
@@ -380,6 +442,17 @@ test "parse: every setting's default, a junk value, the environment over the env
         },
         // An empty environment variable counts as unset.
         .{ .environ = &.{ .{ "KEY_ID", "" }, .{ "TOKEN_URL", "" } }, .file = "KEY_ID=FILEKEY\n", .want = .{ .key_id = "FILEKEY" } },
+        // So does an empty value in the env file, but for TOKEN_URL (above).
+        .{
+            .file = "AM_PORT=\nENGINE=\nENGINE_IDLE_MINUTES=\nENGINE_HEADLESS=\nFIREFOX_WIDEVINE=\nFIREFOX_PATH=\nCHROME_PATH=\"\"\nTEAM_ID=\nKEY_ID=\nAM_IMAGES=\nAM_TUI_LOG=\n",
+            .want = .{},
+        },
+        // `export NAME=value` is a setting; any other line that isn't NAME=value is ignored with
+        // a warning.
+        .{ .file = "# comment\nexport ENGINE=chrome\nengine=firefox\nENGINE firefox\n\n", .want = .{ .engine = .{ .ok = .chrome }, .warnings = &.{
+            "\"engine=firefox\" in the env file isn't NAME=value with NAME in capital letters: ignored",
+            "\"ENGINE firefox\" in the env file isn't NAME=value with NAME in capital letters: ignored",
+        } } },
         // An unknown key in the env file is ignored, with a warning that names am's settings. In
         // the environment, which holds unrelated variables, it isn't.
         .{ .environ = &.{.{ "SOMETHING_ELSE", "1" }}, .file = "ENGINE_IDEL_MINUTES=10\nAM_PORT=48000\n", .want = .{ .port = .{ .ok = 48000 }, .warnings = &.{
@@ -436,7 +509,6 @@ test "TOKEN_URL must be https (or http to this machine), checked on the parsed h
     for ([_][]const u8{ "http://localhost:8787/token", "http://127.0.0.1:8787/token", "https://am-token.example.workers.dev/token" }) |url| {
         try testing.expectEqualStrings(url, (try parse(a, &environ, try a.print("TOKEN_URL={s}\n", .{url}))).token_url.ok.?);
     }
-    try testing.expect(validTokenUrl(default_token_url));
 }
 
 test "the developer token's ids: TEAM_ID and KEY_ID, both or none" {
@@ -447,7 +519,7 @@ test "the developer token's ids: TEAM_ID and KEY_ID, both or none" {
     try testing.expectEqualStrings("K", both.key_id);
 }
 
-test "the env file is KEY=VALUE lines, with optional quotes and ~ expanded" {
+test "the env file is NAME=value lines, with optional quotes and export, and ~ expanded" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const text =
@@ -457,20 +529,30 @@ test "the env file is KEY=VALUE lines, with optional quotes and ~ expanded" {
         \\FIREFOX_PATH='~/bin/firefox'
         \\CHROME_PATH=~
         \\NOT_HOME=a~b
+        \\export ENGINE=chrome
+        \\EXPORTED=1
         \\lowercase=ignored
         \\garbage line
+        \\export
+        \\=no name
         \\EMPTY=
         \\MISMATCHED="quote'
         \\
-    ;
-    const map = try parseEnvFile(arena.allocator(), text, "/home/u");
+    ++ "export\tAM_IMAGES=off\n" ++ "WINDOWS=crlf\r\n";
+    const file = try parseEnvFile(arena.allocator(), text, "/home/u");
+    const map = file.map;
     try testing.expectEqualStrings("TEAM123456", map.get("TEAM_ID").?);
     try testing.expectEqualStrings("KEY1234567", map.get("KEY_ID").?);
     try testing.expectEqualStrings("/home/u/bin/firefox", map.get("FIREFOX_PATH").?);
     try testing.expectEqualStrings("/home/u", map.get("CHROME_PATH").?);
     try testing.expectEqualStrings("a~b", map.get("NOT_HOME").?);
+    try testing.expectEqualStrings("chrome", map.get("ENGINE").?);
+    try testing.expectEqualStrings("off", map.get("AM_IMAGES").?);
+    try testing.expectEqualStrings("1", map.get("EXPORTED").?);
     try testing.expectEqualStrings("", map.get("EMPTY").?);
     try testing.expectEqualStrings("\"quote'", map.get("MISMATCHED").?);
+    try testing.expectEqualStrings("crlf", map.get("WINDOWS").?);
     try testing.expectEqual(null, map.get("lowercase"));
-    try testing.expectEqual(@as(usize, 7), map.count());
+    try testing.expectEqual(@as(usize, 11), map.count());
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "lowercase=ignored", "garbage line", "export", "=no name" }), file.bad_lines);
 }

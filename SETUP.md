@@ -107,12 +107,23 @@ which makes Firefox fetch Google's current version. Chrome is the fallback after
 
 `am doctor` starts the engine and reports DRM, MusicKit and sign-in status.
 
-Every setting (`ENGINE`, `AM_IMAGES`, `TEAM_ID` …) can go in `~/.config/am/env` or in the
-environment; the environment wins. The background process (`am daemon`) reads them when it starts,
-so run `am daemon stop` after a change. A value it doesn't understand (`ENGINE_HEADLESS=false`,
-`FIREFOX_WIDEVINE=Google`) or a key in `~/.config/am/env` that isn't a setting is ignored, with a
-warning in `am doctor` and in `~/.config/am/daemon.log`. A bad `AM_PORT`, `ENGINE` or
-`ENGINE_IDLE_MINUTES` stops it from starting.
+Every setting (`ENGINE`, `AM_IMAGES`, `TEAM_ID` …) can go in `~/.config/am/env`, one `NAME=value`
+(or `export NAME=value`) per line, or in the environment; the environment wins. An empty value
+counts as unset, except `TOKEN_URL=`, which turns the shared developer token off.
+
+A setting applies when the process that uses it starts:
+
+- The background process (`am daemon`) reads `AM_PORT`, `ENGINE`, `ENGINE_IDLE_MINUTES`,
+  `ENGINE_HEADLESS`, `FIREFOX_WIDEVINE`, `FIREFOX_PATH`, `CHROME_PATH`, `TEAM_ID`, `KEY_ID` and
+  `TOKEN_URL` once. After changing one, run `am daemon stop`; the next command starts it again.
+- The TUI reads `AM_IMAGES` and `AM_TUI_LOG` when it opens.
+- Every other `am` command (`am token`, `am search` …) reads `AM_PORT`, `TEAM_ID`, `KEY_ID` and
+  `TOKEN_URL` each time it runs.
+
+A value am doesn't understand (`ENGINE_HEADLESS=false`, `FIREFOX_WIDEVINE=Google`), a key in
+`~/.config/am/env` that isn't a setting, or a line there that isn't `NAME=value` is ignored, with
+a warning in `am doctor` and in `~/.config/am/daemon.log`. A bad `AM_PORT`, `ENGINE` or
+`ENGINE_IDLE_MINUTES` stops the background process from starting.
 
 ---
 
@@ -160,7 +171,8 @@ keys.
 
 - `AM_IMAGES=kitty|placeholders|placements|blocks|off` picks how artwork is drawn (default: kitty
   graphics where the terminal answers the query, else half blocks). `v` cycles it while running.
-- `AM_TUI_LOG=<file>` writes what the TUI does (failed requests, never tokens) to a file.
+- `AM_TUI_LOG=<file>` writes what the TUI does (failed requests, never tokens) to a file, emptied
+  each time the TUI opens. In `~/.config/am/env` it must be an absolute path or start with `~/`.
 - The volume, the last thing played and where it was are kept in `~/.config/am/tui-state.json`, so
   Space plays it again from there after the engine closed, also in a later session.
 - Esc closes a sign-in that opened during the session; `S` starts it again. `NO_COLOR=1` draws

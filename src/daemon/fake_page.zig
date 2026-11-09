@@ -1424,6 +1424,7 @@ pub const PageHost = struct {
                 .playbackClaim = playbackClaim,
                 .build = build,
                 .waitChange = waitChange,
+                .settingsWarningsNow = settingsWarningsNow,
                 .log = log,
             },
         };
@@ -1534,6 +1535,9 @@ pub const PageHost = struct {
     }
     fn userTokenPath(_: *anyopaque, _: Allocator) Allocator.Error![]const u8 {
         return "/home/u/.config/am/music-user-token";
+    }
+    fn settingsWarningsNow(_: *anyopaque, _: Allocator) (Allocator.Error || Io.Cancelable)!?[]const []const u8 {
+        return &.{};
     }
     fn signinPage(_: *anyopaque, _: Allocator) Allocator.Error![]const u8 {
         return "http://localhost:47823/?signin&engine=5555";

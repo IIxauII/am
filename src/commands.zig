@@ -76,19 +76,15 @@ pub const Context = struct {
 
     /// TEAM_ID and KEY_ID, from the environment or the env file.
     pub fn ids(ctx: *const Context) (Failed || Allocator.Error)!developer_token.Ids {
-        const team_id = ctx.settings.team_id;
-        const key_id = ctx.settings.key_id;
-        if (team_id == null or key_id == null) {
-            const team_line = "TEAM_ID=<your Apple Developer Team ID>";
-            const key_line = "KEY_ID=<the ID of your MusicKit key>";
-            const which, const lines, const pronoun = if (team_id == null and key_id == null)
-                .{ "TEAM_ID and KEY_ID", team_line ++ " and " ++ key_line, "them" }
-            else if (team_id == null) .{ "TEAM_ID", team_line, "it" } else .{ "KEY_ID", key_line, "it" };
-            return ctx.fail("{s} missing: put {s} in {s}, or set {s} in the environment", .{
-                which, lines, try ctx.configPath(config.file.env), pronoun,
-            });
-        }
-        return .{ .team_id = team_id.?, .key_id = key_id.? };
+        if (ctx.settings.ids()) |both| return both;
+        const team_line = "TEAM_ID=<your Apple Developer Team ID>";
+        const key_line = "KEY_ID=<the ID of your MusicKit key>";
+        const which, const lines, const pronoun = if (ctx.settings.team_id == null and ctx.settings.key_id == null)
+            .{ "TEAM_ID and KEY_ID", team_line ++ " and " ++ key_line, "them" }
+        else if (ctx.settings.team_id == null) .{ "TEAM_ID", team_line, "it" } else .{ "KEY_ID", key_line, "it" };
+        return ctx.fail("{s} missing: put {s} in {s}, or set {s} in the environment", .{
+            which, lines, try ctx.configPath(config.file.env), pronoun,
+        });
     }
 
     pub const TokenError = Failed || token_source.GetError;

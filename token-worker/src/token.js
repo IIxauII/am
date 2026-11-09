@@ -5,7 +5,7 @@
  * than five days are left. */
 export const LIFETIME_SECONDS = 7 * 24 * 3600
 
-/** Where `am`'s engine page runs (the daemon's default port, src/daemon.zig `default_port`).
+/** Where `am`'s engine page runs (the daemon's default port, src/settings.zig `default_port`).
  * Apple accepts the token only from these origins. `am` sends the first one as the Origin
  * header of its own requests (src/apple.zig `origin`). */
 export const ORIGINS = ['http://localhost:47823', 'http://127.0.0.1:47823', 'http://[::1]:47823']

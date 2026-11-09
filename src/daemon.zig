@@ -511,11 +511,11 @@ pub const Daemon = struct {
     gpa: Allocator,
     environ: *const Environ.Map,
     config_dir: []const u8,
-    /// Read once, at start: restart the daemon (`am daemon stop`) to apply a change.
+    /// Read once, at start: restart the daemon (`am daemon stop`) to apply a change. Its port,
+    /// engine and idle minutes are in `start`.
     settings: settings_mod.Settings,
-    /// `AM_PORT` and `ENGINE`, from `settings.daemonStart`.
-    port: u16,
-    engine_kind: engine.Kind,
+    /// AM_PORT, ENGINE and ENGINE_IDLE_MINUTES, from `settings.daemonStart`.
+    start: settings_mod.Start,
     /// The last "can't download a newer shared token" logged, so the backoff's repeats aren't.
     refresh_warning: OnceText = .{},
     secret: [64]u8,
@@ -671,7 +671,7 @@ pub const Daemon = struct {
         d.launching.store(true, .release);
         defer d.launching.store(false, .release);
         const kind = switch (purpose) {
-            .engine => d.engine_kind,
+            .engine => d.start.engine,
             .signin_window => |w| w.kind,
         };
         const headless = purpose == .engine and d.settings.engine_headless;
@@ -692,7 +692,7 @@ pub const Daemon = struct {
         };
         const nonce = channel_mod.newNonce(d.io);
         const url = switch (purpose) {
-            .engine => try la.print("http://localhost:{d}/?engine={s}", .{ d.port, &nonce }),
+            .engine => try la.print("http://localhost:{d}/?engine={s}", .{ d.start.port, &nonce }),
             .signin_window => |w| try la.dupe(u8, w.url),
         };
         const plan = try engine.plan(la, .{
@@ -932,7 +932,7 @@ pub const Daemon = struct {
     fn newSigninPage(d: *Daemon, arena: Allocator) Allocator.Error![]const u8 {
         const nonce = channel_mod.newNonce(d.io);
         d.channel.setSigninNonce(nonce);
-        return arena.print("http://localhost:{d}/?signin&engine={s}", .{ d.port, &nonce });
+        return arena.print("http://localhost:{d}/?signin&engine={s}", .{ d.start.port, &nonce });
     }
 
     const TokenAnswer = struct { status: u16, storefront: ?[]const u8 };
@@ -1083,6 +1083,7 @@ pub const Daemon = struct {
                 .claimPlayback = hostClaimPlayback,
                 .playbackClaim = hostPlaybackClaim,
                 .userTokenPath = hostUserTokenPath,
+                .settingsWarningsNow = hostSettingsWarningsNow,
                 .log = hostLog,
             },
             .page = d.page.page(),
@@ -1299,6 +1300,18 @@ pub const Daemon = struct {
         return d.configPath(arena, config.file.music_user_token);
     }
 
+    /// The warnings about the settings as they are now: the env file read again, with the
+    /// environment the daemon started with. Null when the env file can't be read.
+    fn hostSettingsWarningsNow(ptr: *anyopaque, arena: Allocator) (Allocator.Error || Io.Cancelable)!?[]const []const u8 {
+        const d: *Daemon = @ptrCast(@alignCast(ptr));
+        const current = settings_mod.load(d.io, arena, d.config_dir, d.environ) catch |e| switch (e) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Canceled => return error.Canceled,
+            else => return null,
+        };
+        return current.warnings;
+    }
+
     // ---- Startup and shutdown ----
 
     fn removeSecret(d: *Daemon) void {
@@ -1347,6 +1360,8 @@ pub fn run(o: RunOptions) RunError!void {
     const start = switch (o.settings.daemonStart()) {
         .ok => |start| start,
         .bad => |why| {
+            // The other problems too, so that one restart is enough to fix them all.
+            for (o.settings.warnings) |warning| o.err.print("warning: {s}\n", .{warning}) catch {};
             o.err.print("error: {s}\n", .{why}) catch {};
             return error.Reported;
         },
@@ -1393,8 +1408,7 @@ pub fn run(o: RunOptions) RunError!void {
         .environ = o.environ,
         .config_dir = o.config_dir,
         .settings = o.settings.*,
-        .port = port,
-        .engine_kind = start.engine,
+        .start = start,
         .secret = undefined,
         .channel = .init(o.io, o.gpa),
         .server = undefined,
@@ -1435,7 +1449,7 @@ pub fn run(o: RunOptions) RunError!void {
         return error.Reported;
     };
     d.log("listening on localhost:{d} (pid {d}, build {s}, engine {t}, idle close after {d} min)", .{
-        port, platform.currentPid(), d.build_id, d.engine_kind, start.idle_minutes,
+        port, platform.currentPid(), d.build_id, d.start.engine, start.idle_minutes,
     });
     // `am doctor` reports them too.
     for (d.settings.warnings) |warning| d.log("warning: {s}", .{warning});

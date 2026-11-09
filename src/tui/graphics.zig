@@ -12,8 +12,19 @@ const std = @import("std");
 const png = @import("png.zig");
 
 const Environ = std.process.Environ;
-const Images = @import("../settings.zig").Images;
 const Io = std.Io;
+
+/// How to draw artwork: the `AM_IMAGES` setting.
+pub const Images = enum {
+    /// Kitty graphics where the terminal answers the query, else half blocks.
+    auto,
+    /// Kitty graphics, with placeholders where the terminal is known to have them.
+    kitty,
+    placeholders,
+    placements,
+    blocks,
+    off,
+};
 
 pub const Protocol = enum {
     /// Kitty graphics shown through U+10EEEE placeholder text (Ghostty, kitty): the image lives
