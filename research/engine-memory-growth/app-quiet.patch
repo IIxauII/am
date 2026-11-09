@@ -1,0 +1,4 @@
+1109c1109
+<   setInterval(report, 1000)
+---
+>   // research variant "quiet": no 1 s report timer; reports go out only on events

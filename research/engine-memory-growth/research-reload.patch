@@ -1,0 +1,20 @@
+diff --git a/src/daemon/endpoints.zig b/src/daemon/endpoints.zig
+index f492f04..af7700d 100644
+--- a/src/daemon/endpoints.zig
++++ b/src/daemon/endpoints.zig
+@@ -54,8 +54,15 @@ pub const all = [_]Endpoint{
+     .{ .name = "queue", .uses_engine = true, .outlives_client = true, .run = runQueue },
+     .{ .name = "control", .uses_engine = true, .run = runControl },
+     .{ .name = "queue-items", .run = runQueueItems },
++    // research/engine-memory-growth only, never merged: reload the engine page now.
++    .{ .name = "research-reload", .run = runResearchReload },
+ };
+ 
++fn runResearchReload(d: *Daemon, r: *Reply, _: []const u8) Reply.Error!void {
++    _ = d.channel.call(r.arena, "reload", "[]", .fromSeconds(5)) catch |e| return r.fail("reload: {t}", .{e});
++    try r.print("reload sent\n", .{});
++}
++
+ pub fn find(name: []const u8) ?*const Endpoint {
+     for (&all) |*e| if (std.mem.eql(u8, e.name, name)) return e;
+     return null;

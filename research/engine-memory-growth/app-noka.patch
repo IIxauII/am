@@ -1,0 +1,4 @@
+1107c1107
+<     fetch('/report', { method: 'POST', body: JSON.stringify(snapshot()), keepalive: true }).catch(() => {})
+---
+>     fetch('/report', { method: 'POST', body: JSON.stringify(snapshot())}).catch(() => {})
