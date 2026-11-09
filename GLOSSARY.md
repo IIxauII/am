@@ -1,6 +1,6 @@
 # am
 
-`am` plays Apple Music from the command line and a TUI, through a page that runs MusicKit JS in a headless browser. These are the words the code, the tests and the docs use for that page and for what is done to it.
+`am` plays Apple Music from the command line and a TUI, through a page that runs MusicKit JS in a headless browser. These are the words the code, the tests and the docs use for that page, for what is done to it, and for the settings am runs with.
 
 ## Language
 
@@ -60,3 +60,13 @@ _Avoid_: kept, skipped
 **Behind on the Music User Token**:
 A page load whose MusicKit doesn't hold the stored Music User Token: its report names another one (`musicUserToken`, a hash as for the developer token). A page load that names none (an older page, a browser that can't hash, MusicKit holding none) is behind when it began before the last sign-in stored a new token, since it may still use the old one. The next repair for a play reloads it first.
 _Avoid_: stale token, page token
+
+### Settings
+
+**Setting**:
+A choice about how am runs (`ENGINE`, `AM_IMAGES` …), read from the environment or the env file; the environment wins.
+_Avoid_: option, config value
+
+**Env file**:
+The KEY=VALUE file `env` in am's config directory that holds settings.
+_Avoid_: config file, dotenv

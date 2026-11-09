@@ -23,6 +23,7 @@ const playback = @import("../playback.zig");
 const player = @import("../daemon/player.zig");
 const playstate = @import("playstate.zig");
 const protocol_mod = @import("../daemon/protocol.zig");
+const settings_mod = @import("../settings.zig");
 const token_source = @import("../token_source.zig");
 const screen_mod = @import("screen.zig");
 const server_mod = @import("../daemon/server.zig");
@@ -47,7 +48,7 @@ pub const Options = struct {
     gpa: Allocator,
     environ: *const std.process.Environ.Map,
     config_dir: []const u8,
-    settings: *const config.Settings,
+    settings: *const settings_mod.Settings,
     port: u16,
 };
 
@@ -223,7 +224,7 @@ pub const App = struct {
     gpa: Allocator,
     environ: *const std.process.Environ.Map,
     config_dir: []const u8,
-    settings: *const config.Settings,
+    settings: *const settings_mod.Settings,
 
     terminal: term.Terminal,
     screen: screen_mod.Screen,
@@ -290,7 +291,8 @@ pub const App = struct {
     kitty_ok: bool = false,
     probe_done: bool = false,
     probe_deadline: i64 = 0,
-    image_override: ?[]const u8 = null,
+    /// `AM_IMAGES`, read at start.
+    images: settings_mod.Images = .auto,
     cell_w: u16 = 0,
     cell_h: u16 = 0,
     slots: std.ArrayList(views.ImageSlot) = .empty,
@@ -331,7 +333,7 @@ pub const App = struct {
             .link = .{ .io = o.io, .gpa = o.gpa, .config_dir = o.config_dir, .port = o.port },
             .ui = .init(o.gpa),
             .frame_arena = .init(o.gpa),
-            .log = .open(o.io, o.environ.get("AM_TUI_LOG")),
+            .log = .open(o.io, o.settings.tui_log),
         };
         app.events = .init(&app.event_buf);
         app.api_pool = .init(&app.api_buf);
@@ -342,7 +344,7 @@ pub const App = struct {
         var id_bytes: [8]u8 = undefined;
         o.io.random(&id_bytes);
         app.link.client_id = std.fmt.bytesToHex(id_bytes, .lower);
-        app.image_override = o.settings.get("AM_IMAGES");
+        app.images = o.settings.images;
         app.loadState();
         return app;
     }
@@ -539,7 +541,7 @@ pub const App = struct {
     fn finishProbe(app: *App) void {
         if (app.probe_done) return;
         app.probe_done = true;
-        app.setProtocol(graphics.choose(app.environ, app.kitty_ok, app.image_override));
+        app.setProtocol(graphics.choose(app.environ, app.kitty_ok, app.images));
     }
 
     fn setProtocol(app: *App, p: graphics.Protocol) void {
@@ -557,8 +559,11 @@ pub const App = struct {
     }
 
     fn cycleImages(app: *App) void {
-        const kitty: graphics.Protocol = if (graphics.choose(app.environ, true, "kitty") == .kitty_placeholders) .kitty_placeholders else .kitty_placements;
-        const can_kitty = app.kitty_ok or (if (app.image_override) |o| std.ascii.startsWithIgnoreCase(o, "kitty") or std.ascii.startsWithIgnoreCase(o, "place") else false);
+        const kitty: graphics.Protocol = if (graphics.choose(app.environ, true, .kitty) == .kitty_placeholders) .kitty_placeholders else .kitty_placements;
+        const can_kitty = app.kitty_ok or switch (app.images) {
+            .kitty, .placeholders, .placements => true,
+            .auto, .blocks, .off => false,
+        };
         const next: graphics.Protocol = switch (app.protocol) {
             .kitty_placeholders, .kitty_placements => .half_blocks,
             .half_blocks => .none,
@@ -2271,19 +2276,18 @@ fn queueRow(q: playback.QueueItem) Item {
     };
 }
 
-/// The env file read again (the user may have just added TEAM_ID and KEY_ID), under the
-/// environment.
-fn readSettings(app: *App, io: Io, a: Allocator) config.Settings {
-    var settings: config.Settings = .{ .environ = app.environ, .file = .init(a) };
-    if (config.readFile(io, a, app.config_dir, config.file.env) catch null) |text| {
-        settings.file = config.parseEnvFile(a, text, platform.homeDir(app.environ)) catch settings.file;
-    }
-    return settings;
+/// The settings read again (the user may have just added TEAM_ID and KEY_ID). An env file
+/// that can't be read counts as none.
+fn readSettings(app: *App, io: Io, a: Allocator) Allocator.Error!settings_mod.Settings {
+    return settings_mod.load(io, a, app.config_dir, app.environ) catch |e| switch (e) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => settings_mod.parse(a, app.environ, null),
+    };
 }
 
 /// The startup check, on a worker: what the config dir holds, then Apple's verdict.
 fn check(app: *App, io: Io, a: Allocator) !?auth.CheckResult {
-    const settings = readSettings(app, io, a);
+    const settings = try readSettings(app, io, a);
     const now = Io.Clock.real.now(io).toSeconds();
     // Your own developer token, else the shared one, downloaded when it is due.
     const developer = token_source.get(a, .fromSettings(io, app.config_dir, &settings, app.transport.transport(), now)) catch |e| switch (e) {
@@ -2293,8 +2297,8 @@ fn check(app: *App, io: Io, a: Allocator) !?auth.CheckResult {
     };
     const input_: auth.CheckInput = .{
         .config_dir = app.config_dir,
-        .team_id = settings.get("TEAM_ID"),
-        .key_id = settings.get("KEY_ID"),
+        .team_id = settings.team_id,
+        .key_id = settings.key_id,
         .developer = developer,
         .user_token = config.storedToken(config.readFile(io, a, app.config_dir, config.file.music_user_token) catch null),
         .now = now,
@@ -2307,7 +2311,7 @@ fn check(app: *App, io: Io, a: Allocator) !?auth.CheckResult {
 /// (`token_source.renewNow`), remembered for the requests after (`App.replaced`). On a worker.
 fn renewSession(ptr: *anyopaque, a: Allocator, refused: []const u8) Io.Cancelable!?[]const u8 {
     const app: *App = @ptrCast(@alignCast(ptr));
-    const settings = readSettings(app, app.io, a);
+    const settings = readSettings(app, app.io, a) catch return null;
     const env: token_source.Env = .fromSettings(app.io, app.config_dir, &settings, app.transport.transport(), Io.Clock.real.now(app.io).toSeconds());
     const renewal = token_source.renewNow(a, env, refused) catch |e| switch (e) {
         error.Canceled => return error.Canceled,
@@ -2345,6 +2349,24 @@ const Poison = struct {
         testing.allocator.rawFree(m, alignment, ra);
     }
 };
+
+test "the TUI logs to AM_TUI_LOG, which may come from the env file" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(testing.io, &buf)];
+    var environ: std.process.Environ.Map = .init(a);
+    const env_file = try a.print("AM_TUI_LOG={s}\n", .{try Io.Dir.path.join(a, &.{ dir, "tui.log" })});
+    const settings = try settings_mod.parse(a, &environ, env_file);
+    const app = try App.create(.{ .io = testing.io, .gpa = testing.allocator, .environ = &environ, .config_dir = dir, .settings = &settings, .port = 1 });
+    defer app.destroy();
+    app.log.print("ready, storefront {s}", .{"gb"});
+    app.log.close();
+    try testing.expectEqualStrings("ready, storefront gb\n", try tmp.dir.readFileAlloc(testing.io, "tui.log", a, .limited(4096)));
+}
 
 test "playing the remembered queue again copies it before freeing it" {
     const gpa = Poison.allocator();
@@ -2409,12 +2431,12 @@ test "the state file keeps the volume, the last queue and where the music was" {
 /// queued (and `destroy` drops it).
 const TestApp = struct {
     environ: std.process.Environ.Map,
-    settings: config.Settings,
+    settings: settings_mod.Settings,
     app: *App,
 
     fn init(t: *TestApp) !void {
         t.environ = .init(testing.allocator);
-        t.settings = .{ .environ = &t.environ, .file = .init(testing.allocator) };
+        t.settings = .{};
         t.app = try App.create(.{
             .io = testing.io,
             .gpa = testing.allocator,
@@ -2427,7 +2449,6 @@ const TestApp = struct {
 
     fn deinit(t: *TestApp) void {
         t.app.destroy();
-        t.settings.file.deinit();
         t.environ.deinit();
     }
 

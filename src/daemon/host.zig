@@ -23,6 +23,8 @@ pub const Host = struct {
     page: engine_page.Page,
     /// The cancel generation of plays and stops.
     plays: *Plays,
+    /// What the daemon's settings ignore (`settings.Settings.warnings`), for `am doctor`.
+    settings_warnings: []const []const u8 = &.{},
 
     /// What a page call can fail with: no page, a page gone or silent, a shutdown.
     pub const CallError = channel_mod.Channel.CallError || Allocator.Error || Io.Cancelable;
@@ -573,6 +575,7 @@ pub const Fake = struct {
     signin_waits: []const SigninWait = &.{.{ .count = 0, .result = null, .window_open = false }},
     token: TokenStatus = .{ .checked = .{ .status = 200, .storefront = "gb" } },
     developer: DeveloperToken = .{ .found = .{ .line = "your own, kid=KEY iss=TEAM expires 2027-04-01 00:00 UTC" } },
+    settings_warnings: []const []const u8 = &.{},
     /// The canned engine page (`Host.page`): what `start` and `probe` answer.
     page_started: engine_page.Started = .{ .kind = "chrome", .pid = 4242, .started = false, .headless = true, .ready = true, .report = .{} },
     page_probe: engine_page.Probe = .{ .h264 = "probably", .aac = "probably", .mseAac = true, .widevine = true },
@@ -628,6 +631,7 @@ pub const Fake = struct {
             .ptr = f,
             .gpa = std.testing.allocator,
             .plays = &f.plays,
+            .settings_warnings = f.settings_warnings,
             .vtable = &.{
                 .call = fakeCall,
                 .userTokenStatus = fakeTokenStatus,

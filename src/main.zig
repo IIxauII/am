@@ -87,6 +87,7 @@ test {
     _ = @import("developer_token.zig");
     _ = @import("token_source.zig");
     _ = @import("config.zig");
+    _ = @import("settings.zig");
     _ = @import("platform.zig");
     _ = @import("apple.zig");
     _ = @import("cli.zig");

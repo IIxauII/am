@@ -107,6 +107,13 @@ which makes Firefox fetch Google's current version. Chrome is the fallback after
 
 `am doctor` starts the engine and reports DRM, MusicKit and sign-in status.
 
+Every setting (`ENGINE`, `AM_IMAGES`, `TEAM_ID` …) can go in `~/.config/am/env` or in the
+environment; the environment wins. The background process (`am daemon`) reads them when it starts,
+so run `am daemon stop` after a change. A value it doesn't understand (`ENGINE_HEADLESS=false`,
+`FIREFOX_WIDEVINE=Google`) or a key in `~/.config/am/env` that isn't a setting is ignored, with a
+warning in `am doctor` and in `~/.config/am/daemon.log`. A bad `AM_PORT`, `ENGINE` or
+`ENGINE_IDLE_MINUTES` stops it from starting.
+
 ---
 
 ## 3. One-time Apple ID sign-in

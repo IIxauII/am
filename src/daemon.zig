@@ -14,6 +14,7 @@ const engine = @import("engine.zig");
 const footprint = @import("footprint.zig");
 const platform = @import("platform.zig");
 const playback = @import("playback.zig");
+const settings_mod = @import("settings.zig");
 const channel_mod = @import("daemon/channel.zig");
 const control = @import("daemon/control.zig");
 const server_mod = @import("daemon/server.zig");
@@ -64,15 +65,6 @@ pub fn buildId(io: Io, arena: Allocator) ![]const u8 {
         hasher.update(buffer[0..n]);
     }
     return arena.print("{x:0>16}", .{hasher.final()});
-}
-
-pub const default_port = 47823;
-pub const default_idle_minutes = 5;
-
-comptime {
-    // The shared developer token's origin claim and the Origin header name this port.
-    std.debug.assert(std.mem.eql(u8, apple.origin, std.fmt.comptimePrint("http://localhost:{d}", .{default_port})));
-    std.debug.assert(token_source.shared_port == default_port);
 }
 
 /// Who holds the daemon lock, from the lock file's text (`pid <n>, port <p>`).
@@ -169,63 +161,6 @@ pub const lock_wait: Io.Duration = .fromSeconds(8);
 const tick: Io.Duration = .fromMilliseconds(250);
 /// How long `am status` measures CPU use over.
 const footprint_window: Io.Duration = .fromSeconds(1);
-
-/// Settings the daemon reads once, at start. Restart it (`am daemon stop`) to apply changes.
-pub const Settings = struct {
-    port: u16,
-    engine_kind: engine.Kind,
-    idle: Io.Duration,
-    headless: bool,
-    widevine_from_google: bool,
-    /// FIREFOX_PATH and CHROME_PATH. `am signin --engine` may use the engine that isn't `ENGINE`.
-    binary_overrides: std.EnumArray(engine.Kind, ?[]const u8),
-
-    pub const Error = error{InvalidSetting};
-
-    /// Problems go to `err`.
-    pub fn read(settings: *const config.Settings, err: *Io.Writer) Error!Settings {
-        const port = portFromSetting(settings.get("AM_PORT")) orelse {
-            err.print("error: " ++ bad_port ++ "\n", .{settings.get("AM_PORT").?}) catch {};
-            return error.InvalidSetting;
-        };
-        const kind = engine.Kind.fromSetting(settings.get("ENGINE")) orelse {
-            err.print("error: ENGINE must be firefox or chrome, not {s}\n", .{settings.get("ENGINE").?}) catch {};
-            return error.InvalidSetting;
-        };
-        const idle_minutes = idleMinutesFromSetting(settings.get("ENGINE_IDLE_MINUTES")) orelse {
-            err.print("error: ENGINE_IDLE_MINUTES must be a whole number of minutes (1 or more), not {s}\n", .{settings.get("ENGINE_IDLE_MINUTES").?}) catch {};
-            return error.InvalidSetting;
-        };
-        return .{
-            .port = port,
-            .engine_kind = kind,
-            .idle = .fromSeconds(@as(i64, idle_minutes) * 60),
-            .headless = !std.mem.eql(u8, settings.get("ENGINE_HEADLESS") orelse "1", "0"),
-            .widevine_from_google = std.mem.eql(u8, settings.get("FIREFOX_WIDEVINE") orelse "", "google"),
-            .binary_overrides = .init(.{
-                .firefox = settings.get(engine.Kind.firefox.spec().path_setting),
-                .chrome = settings.get(engine.Kind.chrome.spec().path_setting),
-            }),
-        };
-    }
-};
-
-/// Says why `portFromSetting` refused an `AM_PORT` value (the `{s}`).
-pub const bad_port = "AM_PORT must be a port number (1-65535), not {s}";
-
-/// `AM_PORT`, default 47823. The port is fixed on purpose: MusicKit keeps the Music User Token
-/// in localStorage, which is scoped to the origin `http://localhost:<port>`.
-pub fn portFromSetting(value: ?[]const u8) ?u16 {
-    const v = value orelse return default_port;
-    const port = std.fmt.parseInt(u16, v, 10) catch return null;
-    return if (port == 0) null else port;
-}
-
-pub fn idleMinutesFromSetting(value: ?[]const u8) ?u32 {
-    const v = value orelse return default_idle_minutes;
-    const minutes = std.fmt.parseInt(u32, v, 10) catch return null;
-    return if (minutes == 0) null else minutes;
-}
 
 /// When to close the engine: once nothing has been playing for `limit`. "Nothing playing" is
 /// paused, stopped or never started. CLI requests that use the engine count as activity for as
@@ -576,11 +511,11 @@ pub const Daemon = struct {
     gpa: Allocator,
     environ: *const Environ.Map,
     config_dir: []const u8,
-    settings: Settings,
-    /// TEAM_ID and KEY_ID, for checking the stored developer token.
-    ids: ?developer_token.Ids,
-    /// The shared developer token's service (`TOKEN_URL`), if any.
-    token_url: ?[]const u8 = null,
+    /// Read once, at start: restart the daemon (`am daemon stop`) to apply a change.
+    settings: settings_mod.Settings,
+    /// `AM_PORT` and `ENGINE`, which the daemon doesn't start without.
+    port: u16,
+    engine_kind: engine.Kind,
     /// The last "can't download a newer shared token" logged, so the backoff's repeats aren't.
     refresh_warning: OnceText = .{},
     secret: [64]u8,
@@ -683,7 +618,7 @@ pub const Daemon = struct {
             .kind = @tagName(r.kind),
             .pid = r.group.leader(),
             .launched = launched,
-            .headless = d.settings.headless,
+            .headless = d.settings.engine_headless,
             .at = r.started,
             .log_path = try d.configPath(arena, engine_log),
         };
@@ -736,26 +671,28 @@ pub const Daemon = struct {
         d.launching.store(true, .release);
         defer d.launching.store(false, .release);
         const kind = switch (purpose) {
-            .engine => d.settings.engine_kind,
+            .engine => d.engine_kind,
             .signin_window => |w| w.kind,
         };
-        const headless = purpose == .engine and d.settings.headless;
+        const headless = purpose == .engine and d.settings.engine_headless;
         var launch_arena: std.heap.ArenaAllocator = .init(d.gpa);
         errdefer launch_arena.deinit();
         const la = launch_arena.allocator();
 
         const spec = kind.spec();
-        const override = d.settings.binary_overrides.get(kind);
+        // `am signin --engine` may use the browser that isn't `ENGINE`.
+        const override = d.settings.browserPath(kind);
+        const path_setting = settings_mod.browserPathName(kind);
         const binary = try findBinary(la, d.io, override, spec.browser.candidates, d.environ) orelse {
             problem.* = if (override) |path|
-                try arena.print("{t} not found at {s} ({s})", .{ kind, path, spec.path_setting })
+                try arena.print("{t} not found at {s} ({t})", .{ kind, path, path_setting })
             else
-                try arena.print("{t} not found; install it or set {s}", .{ kind, spec.path_setting });
+                try arena.print("{t} not found; install it or set {t}", .{ kind, path_setting });
             return error.EngineFailed;
         };
         const nonce = channel_mod.newNonce(d.io);
         const url = switch (purpose) {
-            .engine => try la.print("http://localhost:{d}/?engine={s}", .{ d.settings.port, &nonce }),
+            .engine => try la.print("http://localhost:{d}/?engine={s}", .{ d.port, &nonce }),
             .signin_window => |w| try la.dupe(u8, w.url),
         };
         const plan = try engine.plan(la, .{
@@ -916,15 +853,7 @@ pub const Daemon = struct {
 
     /// Where `token_source` finds the tokens; `transport` must outlive its use.
     fn tokenEnv(d: *const Daemon, transport: *apple.HttpTransport) token_source.Env {
-        return .{
-            .io = d.io,
-            .config_dir = d.config_dir,
-            .ids = d.ids,
-            .url = d.token_url,
-            .port = .{ .port = d.settings.port },
-            .transport = transport.transport(),
-            .now = Io.Clock.real.now(d.io).toSeconds(),
-        };
+        return .fromSettings(d.io, d.config_dir, &d.settings, transport.transport(), Io.Clock.real.now(d.io).toSeconds());
     }
 
     /// The developer token to use, else why not.
@@ -1003,7 +932,7 @@ pub const Daemon = struct {
     fn newSigninPage(d: *Daemon, arena: Allocator) Allocator.Error![]const u8 {
         const nonce = channel_mod.newNonce(d.io);
         d.channel.setSigninNonce(nonce);
-        return arena.print("http://localhost:{d}/?signin&engine={s}", .{ d.settings.port, &nonce });
+        return arena.print("http://localhost:{d}/?signin&engine={s}", .{ d.port, &nonce });
     }
 
     const TokenAnswer = struct { status: u16, storefront: ?[]const u8 };
@@ -1158,6 +1087,7 @@ pub const Daemon = struct {
             },
             .page = d.page.page(),
             .plays = &d.plays,
+            .settings_warnings = d.settings.warnings,
         };
     }
 
@@ -1237,7 +1167,7 @@ pub const Daemon = struct {
             if (d.running) |*r| state.engine = .{
                 .kind = @tagName(r.kind),
                 .pid = r.group.leader(),
-                .headless = d.settings.headless and !r.signin_window,
+                .headless = d.settings.engine_headless and !r.signin_window,
                 .signin_window = r.signin_window,
                 .idle_close_in_s = @max(0, d.idle.remaining(d.now()).toSeconds()),
             };
@@ -1399,7 +1329,7 @@ pub const RunOptions = struct {
     gpa: Allocator,
     environ: *const Environ.Map,
     config_dir: []const u8,
-    settings: *const config.Settings,
+    settings: *const settings_mod.Settings,
     /// Leave the terminal's session first (the CLI's auto-start passes `--detach`).
     detach: bool,
     err: *Io.Writer,
@@ -1414,7 +1344,14 @@ pub const RunError = error{
 /// already holds the port; fails when another daemon uses the config dir.
 pub fn run(o: RunOptions) RunError!void {
     if (o.detach) platform.detachFromTerminal();
-    const settings = Settings.read(o.settings, o.err) catch return error.Reported;
+    // A bad AM_PORT, ENGINE or ENGINE_IDLE_MINUTES refuses the start; with none, all three are ok.
+    if (o.settings.refusal()) |why| {
+        o.err.print("error: {s}\n", .{why}) catch {};
+        return error.Reported;
+    }
+    const port = o.settings.port.ok;
+    const idle_minutes = o.settings.engine_idle_minutes.ok;
+    const idle: Io.Duration = .fromSeconds(@as(i64, idle_minutes) * 60);
 
     // One daemon per config dir: a second one, even on another port, would kill the first
     // one's engine as a leftover (same profile).
@@ -1428,11 +1365,11 @@ pub fn run(o: RunOptions) RunError!void {
         return error.Reported;
     };
     var holder_buffer: [64]u8 = undefined;
-    const holder = std.mem.print(&holder_buffer, "pid {d}, port {d}\n", .{ platform.currentPid(), settings.port }) catch unreachable;
+    const holder = std.mem.print(&holder_buffer, "pid {d}, port {d}\n", .{ platform.currentPid(), port }) catch unreachable;
     // A daemon that just stopped keeps the lock until its engine has exited (up to 7 s).
     var take: TakeLock = .{ .holder = holder };
     var other: [64]u8 = undefined;
-    switch (waitOutLock(o.io, lock_path, settings.port, &other, &take, TakeLock.held) catch return error.Reported) {
+    switch (waitOutLock(o.io, lock_path, port, &other, &take, TakeLock.held) catch return error.Reported) {
         .free => {},
         .other, .stuck => |who| {
             o.err.print("error: another am daemon ({s}) uses {s}; not starting\n", .{ who, o.config_dir }) catch {};
@@ -1445,7 +1382,6 @@ pub fn run(o: RunOptions) RunError!void {
     }
     const lock = take.file.?;
     defer lock.close(o.io);
-    const ids = token_source.idsFrom(o.settings);
     var build_arena: std.heap.ArenaAllocator = .init(o.gpa);
     defer build_arena.deinit();
     const build_id = buildId(o.io, build_arena.allocator()) catch "unknown";
@@ -1455,15 +1391,15 @@ pub fn run(o: RunOptions) RunError!void {
         .gpa = o.gpa,
         .environ = o.environ,
         .config_dir = o.config_dir,
-        .settings = settings,
-        .ids = ids,
-        .token_url = token_source.urlFrom(o.settings),
+        .settings = o.settings.*,
+        .port = port,
+        .engine_kind = o.settings.engine.ok,
         .secret = undefined,
         .channel = .init(o.io, o.gpa),
         .server = undefined,
-        .idle = .{ .limit = settings.idle, .last_active = Io.Clock.awake.now(o.io) },
+        .idle = .{ .limit = idle, .last_active = Io.Clock.awake.now(o.io) },
         .signins = .init(o.io, o.gpa),
-        .requests = .{ .timer = .{ .limit = settings.idle, .last_active = Io.Clock.awake.now(o.io) } },
+        .requests = .{ .timer = .{ .limit = idle, .last_active = Io.Clock.awake.now(o.io) } },
         .build_id = build_id,
     };
     defer d.channel.deinit();
@@ -1475,13 +1411,13 @@ pub fn run(o: RunOptions) RunError!void {
     d.page = .init(o.io, &d.channel, &d.plays, d.enginePagePort(), .{});
 
     // Binding is the lock; only the winner writes the secret.
-    d.server.bind(settings.port) catch |e| switch (e) {
+    d.server.bind(port) catch |e| switch (e) {
         error.PortBusy => {
-            d.log("port {d} is taken (another am daemon running?); exiting", .{settings.port});
+            d.log("port {d} is taken (another am daemon running?); exiting", .{port});
             return;
         },
         else => {
-            o.err.print("error: can't listen on port {d}: {t}\n", .{ settings.port, e }) catch {};
+            o.err.print("error: can't listen on port {d}: {t}\n", .{ port, e }) catch {};
             return error.Reported;
         },
     };
@@ -1498,8 +1434,10 @@ pub fn run(o: RunOptions) RunError!void {
         return error.Reported;
     };
     d.log("listening on localhost:{d} (pid {d}, build {s}, engine {t}, idle close after {d} min)", .{
-        settings.port, platform.currentPid(), d.build_id, settings.engine_kind, @divFloor(settings.idle.toSeconds(), 60),
+        port, platform.currentPid(), d.build_id, d.engine_kind, idle_minutes,
     });
+    // `am doctor` reports them too.
+    for (d.settings.warnings) |warning| d.log("warning: {s}", .{warning});
 
     var arena: std.heap.ArenaAllocator = .init(o.gpa);
     defer arena.deinit();
@@ -1528,20 +1466,6 @@ pub fn run(o: RunOptions) RunError!void {
 }
 
 const testing = std.testing;
-
-test "AM_PORT and ENGINE_IDLE_MINUTES: defaults, and junk is refused" {
-    try testing.expectEqual(@as(?u16, 47823), portFromSetting(null));
-    try testing.expectEqual(@as(?u16, 50000), portFromSetting("50000"));
-    try testing.expectEqual(@as(?u16, null), portFromSetting("0"));
-    try testing.expectEqual(@as(?u16, null), portFromSetting("70000"));
-    try testing.expectEqual(@as(?u16, null), portFromSetting("http"));
-
-    try testing.expectEqual(@as(?u32, 5), idleMinutesFromSetting(null));
-    try testing.expectEqual(@as(?u32, 1), idleMinutesFromSetting("1"));
-    try testing.expectEqual(@as(?u32, null), idleMinutesFromSetting("0"));
-    try testing.expectEqual(@as(?u32, null), idleMinutesFromSetting("-1"));
-    try testing.expectEqual(@as(?u32, null), idleMinutesFromSetting("1.5"));
-}
 
 fn at(seconds: i64) Io.Timestamp {
     return .fromNanoseconds(@as(i96, seconds) * std.time.ns_per_s);

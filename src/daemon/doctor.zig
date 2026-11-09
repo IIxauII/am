@@ -2,7 +2,8 @@
 //! MusicKit's exact EME config, `browserSupportsVideoDrm`, the Music User Token, MusicKit's
 //! authorization and the subscription. Each check prints ✔, ✘ or ?, as in the Node POC. The
 //! engine page module (`engine_page.zig`) makes the repairs; doctor asks it to repair the page if
-//! idle and reports what came back.
+//! idle and reports what came back. Before all that, it warns about the settings the daemon
+//! runs with that it ignores.
 const std = @import("std");
 const engine_page = @import("engine_page.zig");
 const host_mod = @import("host.zig");
@@ -18,6 +19,8 @@ const Reply = protocol.Reply;
 /// subscription: all about the page as the repair left it.
 pub fn run(host: Host, r: *Reply) Reply.Error!void {
     const a = r.arena;
+    // First, so that an engine that doesn't start still shows them.
+    for (host.settings_warnings) |warning| try r.print("warning: {s}\n", .{warning});
     var problem: []const u8 = "";
     const started = host.page.start(a, &problem) catch |e| switch (e) {
         error.EngineFailed => return r.fail("the engine didn't start: {s}", .{problem}),
@@ -176,6 +179,22 @@ test "a rejected Music User Token, or one that couldn't be checked, says so, and
         // Token repairs only with a Music User Token Apple accepts.
         try testing.expectEqual(false, f.idle_user_token_ok);
     }
+}
+
+test "doctor starts with what the daemon's settings ignore, then checks as always" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f: Fake = .{ .arena = a, .settings_warnings = &.{
+        "ENGINE_HEADLESS must be 0 (show the engine) or 1 (headless), not \"false\": ignored, the engine runs headless",
+        "ENGINE_IDEL_MINUTES in the env file isn't a setting: ignored. The settings are AM_PORT, …",
+    } };
+    try testing.expect(std.mem.startsWith(u8, try runDoctor(&f, a),
+        \\warning: ENGINE_HEADLESS must be 0 (show the engine) or 1 (headless), not "false": ignored, the engine runs headless
+        \\warning: ENGINE_IDEL_MINUTES in the env file isn't a setting: ignored. The settings are AM_PORT, …
+        \\engine: chrome (headless), pid 4242 (already running)
+        \\
+    ));
 }
 
 /// The page MusicKit signed out, as the engine start found it.
