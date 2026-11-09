@@ -179,7 +179,7 @@ beyond the rows above:
   `src/daemon.zig`, used by `engineInUse` and `am status`), so the heartbeat needs either N < 5, which leaves
   about a quarter of the growth (*inferred*, linear), or a longer allowance for an idle page (a 60 s heartbeat
   leaves about 1 MiB/h, *inferred*). While music plays the 1 s report stays, and so does its growth: about
-  65 MiB/h, plus whatever a bigger snapshot adds (the earlier soak's 1.6–1.8 MiB/min with a song loaded fits
+  70 MiB/h, plus whatever a bigger snapshot adds (the earlier soak's 1.6–1.8 MiB/min with a song loaded fits
   that, *inferred*).
 - **One long-lived connection for reports** (a WebSocket) instead of one HTTP request each. This is *untested*,
   and the daemon has no WebSocket server.
