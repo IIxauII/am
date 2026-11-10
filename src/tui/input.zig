@@ -155,16 +155,16 @@ pub const Decoder = struct {
     /// Bytes are waiting that `flushPending` would decode. False inside a paste or a reply,
     /// which wait for their end however long it takes.
     pub fn pending(d: *const Decoder) bool {
-        var ahead = d.cursor();
+        var ahead = d.scan();
         return ahead.next(true) != null;
     }
 
-    fn cursor(d: *const Decoder) Cursor {
+    fn scan(d: *const Decoder) Scan {
         return .{ .bytes = d.buf.items, .pos = d.pos, .in_paste = d.in_paste };
     }
 
     fn decode(d: *Decoder, force: bool) ?Event {
-        var at = d.cursor();
+        var at = d.scan();
         const from = at;
         const found = at.next(force);
         d.pos = at.pos;
@@ -196,32 +196,32 @@ pub const Decoder = struct {
 
 /// Where decoding stands in some bytes: the position, and whether it is inside a paste.
 /// `Decoder.decode` moves one through the buffer; a copy looks ahead without moving it.
-const Cursor = struct {
+const Scan = struct {
     bytes: []const u8,
     pos: usize,
     in_paste: bool,
 
     /// The next event, or null when the rest needs more bytes. `force` decodes an unfinished
     /// sequence as keys, as a flush does. A paste comes with only the part of it in `bytes`.
-    fn next(c: *Cursor, force: bool) ?Event {
+    fn next(s: *Scan, force: bool) ?Event {
         while (true) {
-            const rest = c.bytes[c.pos..];
-            if (c.in_paste) {
+            const rest = s.bytes[s.pos..];
+            if (s.in_paste) {
                 const end = std.mem.find(u8, rest, paste_end) orelse return null;
-                c.in_paste = false;
-                c.pos += end + paste_end.len;
+                s.in_paste = false;
+                s.pos += end + paste_end.len;
                 return .{ .paste = rest[0..end] };
             }
             if (rest.len == 0) return null;
             switch (parse(rest, force)) {
                 .incomplete => return null,
-                .skip => |n| c.pos += n,
+                .skip => |n| s.pos += n,
                 .paste_start => |n| {
-                    c.pos += n;
-                    c.in_paste = true;
+                    s.pos += n;
+                    s.in_paste = true;
                 },
                 .event => |e| {
-                    c.pos += e.len;
+                    s.pos += e.len;
                     return e.event;
                 },
             }
@@ -229,7 +229,7 @@ const Cursor = struct {
     }
 
     /// Whether more than one key is left, counting what a flush would decode at the end.
-    fn severalKeys(from: Cursor) bool {
+    fn severalKeys(from: Scan) bool {
         var ahead = from;
         var keys: usize = 0;
         while (ahead.next(true)) |e| {
@@ -375,7 +375,7 @@ fn parseCsi(bytes: []const u8, force: bool) Parsed {
         if (bytes.len > max_sequence) return altChar(bytes);
         // A reply split across reads waits for its end, through a flush too: its bytes are
         // never keys.
-        if (force and !canStillBeReply(marker, bytes[params_start..])) return altChar(bytes);
+        if (force and !canStillBeCsiReply(marker, bytes[params_start..])) return altChar(bytes);
         return .incomplete;
     }
     const final = bytes[i];
@@ -441,7 +441,7 @@ fn parseCsi(bytes: []const u8, force: bool) Parsed {
 /// Whether an unfinished CSI, `rest` after its marker, can still be one of the replies to the
 /// startup query (`graphics.query`) that are CSIs: DA1, or any other with `?`, which no key
 /// has, and the cell size `6 ; <h> ; <w> t`. `ESC [` alone is Alt-[, not one.
-fn canStillBeReply(marker: u8, rest: []const u8) bool {
+fn canStillBeCsiReply(marker: u8, rest: []const u8) bool {
     if (marker == '?') return true;
     if (marker != 0 or rest.len == 0 or rest[0] != '6') return false;
     if (rest.len > 1 and rest[1] != ';') return false;
@@ -511,9 +511,10 @@ fn parseApc(bytes: []const u8, force: bool) Parsed {
     if (bytes[2] != 'G') return altChar(bytes);
     const st = switch (kittyReplyEnd(bytes[3..])) {
         .st => |i| i,
-        // A reply split across reads waits for its end, through a flush too: its bytes are
-        // never keys. Only one longer than any reply gives up.
+        // Only one longer than any reply gives up waiting.
         .open => return if (bytes.len > max_sequence) altChar(bytes) else .incomplete,
+        // Its `ESC \` would still make it a reply, so it waits like any unfinished sequence.
+        .odd => return if (force or bytes.len > max_sequence) altChar(bytes) else .incomplete,
         .bad => return altChar(bytes),
     };
     const body = bytes[3..][0..st];
@@ -533,20 +534,24 @@ fn parseApc(bytes: []const u8, force: bool) Parsed {
 const ReplyEnd = union(enum) {
     /// Where the closing `ESC \` starts.
     st: usize,
-    /// All of it can be the start of a reply.
+    /// No `ESC \` yet, and all of it can be how a reply begins.
     open,
-    /// It can't be a reply.
+    /// No `ESC \` yet, and its control data is like no reply's. Most likely keys, but its
+    /// `ESC \` would still make it a reply.
+    odd,
+    /// It can't be a reply: an ESC in it starts something else.
     bad,
 };
 
 /// How a kitty graphics reply goes on after `ESC _ G`: control data such as `i=31,p=1`, then
 /// `;` and a message, then `ESC \`, with no other ESC. Once its `ESC \` is here it is a reply,
-/// whatever its control data. Until then it must look like one, so that keys someone types
-/// after Alt-_ G are only held while they could still be a reply.
+/// whatever its control data. Until then, one that looks like a reply waits for its end
+/// through the flush, and one that doesn't waits only for the flush, as any unfinished
+/// sequence does.
 fn kittyReplyEnd(body: []const u8) ReplyEnd {
     const esc = std.mem.findScalar(u8, body, 0x1b) orelse body.len;
     if (esc + 1 < body.len) return if (body[esc + 1] == '\\') .{ .st = esc } else .bad;
-    return if (canStartKittyReply(body[0..esc])) .open else .bad;
+    return if (canStartKittyReply(body[0..esc])) .open else .odd;
 }
 
 /// Whether `text` can be how a kitty graphics reply's control data and message begin.
@@ -865,10 +870,16 @@ test "kitty graphics replies" {
     try testing.expectEqual(0, d.next().?.kitty_graphics_ok.id);
     try testing.expectEqual(null, d.next());
 
-    // Whole, it is a reply whatever its control data: only an unfinished one must look like one.
-    try d.feed("\x1b_Gi=31,x.y z;OK\x1b\\");
+    // Whole, it is a reply whatever its control data: only an unfinished one must look like one
+    // to wait through the flush. Split across reads with no wait between them, it is one too.
+    const odd = "\x1b_Gi=31,x.y z;OK\x1b\\";
+    try d.feed(odd);
     try testing.expectEqual(31, d.next().?.kitty_graphics_ok.id);
     try testing.expectEqual(null, d.next());
+    var want: std.ArrayList(u8) = .empty;
+    defer want.deinit(testing.allocator);
+    try testing.expectEqual(1, try describeRead(odd, &want));
+    for (1..odd.len) |cut| try expectSplitGives(odd, cut, false, want.items);
 }
 
 test "the answer to the startup query split across reads stays together through the wait" {
@@ -900,15 +911,25 @@ test "the answer to the startup query split across reads stays together through 
 }
 
 test "after ESC _ G, what can't be a graphics reply is keys" {
-    // Decoded at once, not waited for: a byte no reply has...
+    // At the flush, as any unfinished sequence, when its control data is like no reply's: its
+    // `ESC \` could still come...
     for ([_][]const u8{ "\x1b_Gi=1\r", "\x1b_Gab" }) |bytes| {
         var d: Decoder = .init(testing.allocator);
         defer d.deinit();
         try d.feed(bytes);
-        try testing.expect(d.next().?.key.key.eql(.{ .code = .{ .char = '_' }, .alt = true }));
+        try testing.expectEqual(null, d.next());
+        try testing.expect(d.pending());
+        try testing.expect(d.flushPending().?.key.key.eql(.{ .code = .{ .char = '_' }, .alt = true }));
     }
-    try expectKeys("\x1b_Gi=1\x1bx", &.{ .{ .code = .{ .char = '_' }, .alt = true }, .char('G'), .char('i'), .char('='), .char('1'), .{ .code = .{ .char = 'x' }, .alt = true } });
 
+    // ...and at once after an ESC that doesn't close it, which starts something else.
+    var at_once: Decoder = .init(testing.allocator);
+    defer at_once.deinit();
+    try at_once.feed("\x1b_Gi=1\x1bx");
+    for ([_]Key{ .{ .code = .{ .char = '_' }, .alt = true }, .char('G'), .char('i'), .char('='), .char('1'), .{ .code = .{ .char = 'x' }, .alt = true } }) |want| {
+        try testing.expect(at_once.next().?.key.key.eql(want));
+    }
+    try testing.expectEqual(null, at_once.next());
     // A reply right after such keys is still a reply: it doesn't end theirs.
     var d: Decoder = .init(testing.allocator);
     defer d.deinit();
