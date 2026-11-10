@@ -1,6 +1,9 @@
 //! Every am setting: its name, default, parser and the text of its problems. A setting comes
-//! from the environment, else the env file (`<config dir>/env`), else its default.
+//! from the environment, else the env file (`<config dir>/env`), else its default. The TUI's
+//! own settings come from the settings file (`<config dir>/settings.json`, `Tui`), which holds
+//! only what differs from the defaults, and `AM_IMAGES` wins over its artwork.
 const std = @import("std");
+const builtin = @import("builtin");
 const apple = @import("apple.zig");
 const config = @import("config.zig");
 const developer_token = @import("developer_token.zig");
@@ -95,8 +98,9 @@ pub const Settings = struct {
     /// (`wrangler dev`). Null when `TOKEN_URL=` (empty) in the env file turns it off; an empty
     /// environment variable counts as unset.
     token_url: Checked(?[]const u8) = .{ .ok = default_token_url },
-    /// `AM_IMAGES`.
-    images: Images = .auto,
+    /// `AM_IMAGES`; null when unset. When set, it wins over settings.json's artwork for the run
+    /// (`parseTui`).
+    images: ?Images = null,
     /// `AM_TUI_LOG`: the file the TUI writes what it does to (never tokens), for debugging. It is
     /// truncated, so the env file must give an absolute path (or `~/…`): a relative one would
     /// name a different file in each directory am runs in.
@@ -136,6 +140,233 @@ pub const Settings = struct {
         };
     }
 };
+
+/// settings.json's `artwork`.
+pub const Artwork = @import("tui/graphics.zig").Artwork;
+
+/// The TUI's own settings: the settings file's (`settings.json` in the config directory), with
+/// `AM_IMAGES` over its artwork. Only the TUI reads them, once at start.
+pub const Tui = struct {
+    /// How artwork is drawn at start: the file's `artwork`, or what `AM_IMAGES` picks.
+    artwork: Artwork = .images,
+    /// What Images draws: `auto` (kitty images where the terminal can show them, else half
+    /// blocks), or the kitty protocol `AM_IMAGES` names.
+    images: Images = .auto,
+    /// `AM_IMAGES` is set: it wins over the file's artwork for the run, so `v` changes only the
+    /// session.
+    images_set: bool = false,
+    /// Why am never writes the file (it isn't valid JSON, or can't be read), e.g.
+    /// `settings.json isn't valid JSON`; null when it can. Its settings are then the defaults.
+    unwritable: ?[]const u8 = null,
+    /// What is wrong with the file, in the file's order; each bad entry falls back to its
+    /// default. The TUI's status line names the first at startup.
+    problems: []const []const u8 = &.{},
+
+    /// Why a change to artwork lasts only for the session, or null when it is saved.
+    pub fn artworkSessionOnly(t: *const Tui) ?[]const u8 {
+        return if (t.images_set) "AM_IMAGES is set" else t.unwritable;
+    }
+};
+
+/// The TUI's settings from settings.json's text (null: there is none) and `AM_IMAGES` (null:
+/// unset). Allocates into `arena`.
+pub fn parseTui(arena: Allocator, images: ?Images, text: ?[]const u8) Allocator.Error!Tui {
+    var t: Tui = .{};
+    var problems: std.ArrayList([]const u8) = .empty;
+    const object: std.json.ObjectMap = switch (try parseObject(arena, text orelse "")) {
+        .object => |o| o,
+        .bad => |bad| o: {
+            t.unwritable = bad.why;
+            try problems.append(arena, try arena.print("{s}{s}: using the defaults and leaving the file alone", .{ bad.why, bad.where }));
+            break :o .empty;
+        },
+    };
+    if (object.get("artwork")) |v| {
+        t.artwork = parseArtwork(v) orelse a: {
+            try problems.append(arena, try arena.print("artwork in settings.json must be \"images\", \"blocks\" or \"off\", not {f}: showing images", .{std.json.fmt(v, .{})}));
+            break :a .images;
+        };
+    }
+    if (images) |i| {
+        t.images_set = true;
+        t.artwork = switch (i) {
+            .blocks => .blocks,
+            .off => .off,
+            .auto, .kitty, .placeholders, .placements => .images,
+        };
+        if (t.artwork == .images) t.images = i;
+    }
+    t.problems = problems.items;
+    return t;
+}
+
+/// The TUI's settings from settings.json in `config_dir` and `AM_IMAGES` (`Settings.images`).
+/// A file that can't be read counts as one that isn't valid JSON: the defaults, a problem, and
+/// never written.
+pub fn loadTui(io: Io, arena: Allocator, config_dir: []const u8, images: ?Images) Allocator.Error!Tui {
+    const text = config.readFile(io, arena, config_dir, config.file.settings) catch |e| switch (e) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            const why = "can't read settings.json";
+            var t = try parseTui(arena, images, null);
+            t.unwritable = why;
+            t.problems = try arena.dupe([]const u8, &.{try arena.print(why ++ " ({t}): using the defaults and leaving the file alone", .{e})});
+            return t;
+        },
+    };
+    return parseTui(arena, images, text);
+}
+
+pub const Saved = union(enum) {
+    saved,
+    /// The file says so already.
+    unchanged,
+    /// Why the file is never written (`Applied.refused`).
+    refused: []const u8,
+};
+
+/// Saves one change: reads settings.json in `config_dir` again, applies `change` on top
+/// (`applyChange`), and replaces the file atomically, with a temporary file and a rename. So a
+/// hand edit since the TUI started, or another TUI's save, survives.
+pub fn saveChange(io: Io, arena: Allocator, config_dir: []const u8, change: Change) !Saved {
+    const text = try config.readFile(io, arena, config_dir, config.file.settings);
+    switch (try applyChange(arena, text, change)) {
+        .unchanged => return .unchanged,
+        .refused => |why| return .{ .refused = why },
+        .text => |new| {
+            try writeTuiFile(io, arena, config_dir, new);
+            return .saved;
+        },
+    }
+}
+
+/// Replaces settings.json, as the TUI's state file is replaced (`platform.writePrivateFile`). A
+/// settings.json that links elsewhere (dotfiles) stays a link: the file it points to is replaced
+/// instead, and its directory, which isn't am's, keeps its permissions.
+fn writeTuiFile(io: Io, arena: Allocator, config_dir: []const u8, text: []const u8) !void {
+    const path = try Io.Dir.path.join(arena, &.{ config_dir, config.file.settings });
+    const linked = if (Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = false })) |s| s.kind == .sym_link else |_| false;
+    // A dangling link, or one that can't be followed, is replaced by am's own file.
+    const target = if (linked) Io.Dir.cwd().realPathFileAlloc(io, path, arena) catch |e| switch (e) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => null,
+    } else null;
+    const t = target orelse return platform.writePrivateFile(io, config_dir, config.file.settings, text);
+    var dir = try Io.Dir.cwd().openDir(io, Io.Dir.path.dirname(t) orelse return error.FileNotFound, .{});
+    defer dir.close(io);
+    var file = try dir.createFileAtomic(io, Io.Dir.path.basename(t), .{ .replace = true });
+    defer file.deinit(io);
+    try file.file.writeStreamingAll(io, text);
+    try file.replace(io);
+}
+
+/// One change to the settings file.
+pub const Change = union(enum) {
+    artwork: Artwork,
+};
+
+/// What a change does to the settings file's text.
+pub const Applied = union(enum) {
+    /// The file's new text.
+    text: []const u8,
+    /// The file says so already: nothing to write.
+    unchanged,
+    /// The text isn't one am can write back (`Tui.unwritable`, e.g. `settings.json isn't valid
+    /// JSON`): the file is never overwritten.
+    refused: []const u8,
+};
+
+/// Applies one change on top of the settings file's text as it is now (null: there is none),
+/// keeping every other entry, the ones am doesn't know included, in their order. A change back
+/// to an entry's default removes the entry. Allocates into `arena`.
+pub fn applyChange(arena: Allocator, text: ?[]const u8, change: Change) Allocator.Error!Applied {
+    var object = switch (try parseObject(arena, text orelse "")) {
+        .object => |o| o,
+        .bad => |bad| return .{ .refused = bad.why },
+    };
+    const changed = switch (change) {
+        .artwork => |a| try setEntry(arena, &object, "artwork", if (a == .images) null else .{ .string = @tagName(a) }),
+    };
+    if (!changed) return .unchanged;
+    var out: std.Io.Writer.Allocating = .init(arena);
+    std.json.Stringify.value(std.json.Value{ .object = object }, .{ .whitespace = .indent_2 }, &out.writer) catch return error.OutOfMemory;
+    out.writer.writeByte('\n') catch return error.OutOfMemory;
+    return .{ .text = out.written() };
+}
+
+/// Sets entry `name` to `value` where it is, else last; null removes it (the default). False
+/// when the object has that already.
+fn setEntry(arena: Allocator, object: *std.json.ObjectMap, name: []const u8, value: ?std.json.Value) Allocator.Error!bool {
+    const new = value orelse return object.orderedRemove(name);
+    if (object.getPtr(name)) |old| {
+        if (old.* == .string and new == .string and std.mem.eql(u8, old.string, new.string)) return false;
+        old.* = new;
+        return true;
+    }
+    try object.put(arena, name, new);
+    return true;
+}
+
+/// settings.json's text as a JSON object, or why am can't use it.
+const Object = union(enum) {
+    object: std.json.ObjectMap,
+    bad: struct {
+        /// E.g. `settings.json isn't valid JSON`.
+        why: []const u8,
+        /// Where in the file, e.g. ` (line 3, column 1)`, or empty.
+        where: []const u8 = "",
+    },
+};
+
+/// How deep `{}` and `[]` may nest. A save writes the file back with `std.json.Stringify`, which
+/// stops at 256 levels.
+const max_nesting = 128;
+
+/// The text's object. An empty file (blanks only) holds nothing to lose: it is an empty object.
+fn parseObject(arena: Allocator, text: []const u8) Allocator.Error!Object {
+    if (config.trimSpace(text).len == 0) return .{ .object = .empty };
+    var scanner: std.json.Scanner = .initCompleteInput(arena, text);
+    var diagnostics: std.json.Diagnostics = .{};
+    scanner.enableDiagnostics(&diagnostics);
+    const value = std.json.parseFromTokenSourceLeaky(std.json.Value, arena, &scanner, json_options) catch |e| switch (e) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return .{ .bad = .{
+            .why = "settings.json isn't valid JSON",
+            .where = try arena.print(" (line {d}, column {d})", .{ diagnostics.getLine(), diagnostics.getColumn() }),
+        } },
+    };
+    if (value != .object) return .{ .bad = .{ .why = "settings.json isn't a JSON object", .where = " ({ … })" } };
+    if (try nesting(arena, text) > max_nesting) return .{ .bad = .{ .why = std.fmt.comptimePrint("settings.json nests more than {d} levels deep", .{max_nesting}) } };
+    return .{ .object = value.object };
+}
+
+/// How deep `{}` and `[]` nest in `text`, which is valid JSON.
+fn nesting(arena: Allocator, text: []const u8) Allocator.Error!usize {
+    var scanner: std.json.Scanner = .initCompleteInput(arena, text);
+    var deepest: usize = 0;
+    while (true) switch (scanner.next() catch |e| switch (e) {
+        error.OutOfMemory => return error.OutOfMemory,
+        // Not reached for valid JSON; too deep to write is the safe answer.
+        else => return max_nesting + 1,
+    }) {
+        .object_begin, .array_begin => deepest = @max(deepest, scanner.stackHeight()),
+        .end_of_document => return deepest,
+        else => {},
+    };
+}
+
+/// Numbers stay as they are written, so a save writes back the ones am doesn't know unchanged.
+const json_options: std.json.ParseOptions = .{ .parse_numbers = false, .duplicate_field_behavior = .use_last };
+
+/// Any letter case, as `AM_IMAGES`.
+fn parseArtwork(v: std.json.Value) ?Artwork {
+    const s = switch (v) {
+        .string => |s| s,
+        else => return null,
+    };
+    for (std.enums.values(Artwork)) |a| if (std.ascii.eqlIgnoreCase(s, @tagName(a))) return a;
+    return null;
+}
 
 /// AM_PORT, ENGINE and ENGINE_IDLE_MINUTES, all good: what the daemon starts with.
 pub const Start = struct {
@@ -351,7 +582,8 @@ test "parse: every setting's default, a junk value, the environment over the env
             .team_id = null,
             .key_id = null,
             .token_url = .{ .ok = "https://am-token.xauyxau.workers.dev/token" },
-            .images = .auto,
+            // Unset: settings.json's artwork applies.
+            .images = null,
             .tui_log = null,
             .warnings = &.{},
         } },
@@ -393,7 +625,9 @@ test "parse: every setting's default, a junk value, the environment over the env
         .{ .file = "AM_IMAGES=blocks\n", .want = .{ .images = .blocks } },
         .{ .file = "AM_IMAGES=off\n", .want = .{ .images = .off } },
         .{ .file = "AM_IMAGES=none\n", .want = .{ .images = .off } },
-        // Anything else is automatic, as before.
+        // Set to auto, or anything else, is automatic, as before, and still wins over
+        // settings.json.
+        .{ .file = "AM_IMAGES=auto\n", .want = .{ .images = .auto } },
         .{ .file = "AM_IMAGES=nonsense\n", .want = .{ .images = .auto } },
         .{ .environ = &home_environ, .file = "AM_TUI_LOG=~/am-tui.log\n", .want = .{ .tui_log = "/home/u/am-tui.log" } },
         // A relative AM_TUI_LOG in the env file would truncate a file wherever am runs; in the
@@ -468,6 +702,205 @@ test "parse: every setting's default, a junk value, the environment over the env
         for (case.environ) |kv| try environ.put(kv[0], kv[1]);
         try testing.expectEqualDeep(case.want, try parse(a, &environ, case.file));
     }
+}
+
+const TuiCase = struct {
+    /// `AM_IMAGES`, as `parse` reads it; null: unset.
+    images: ?Images = null,
+    /// settings.json's text; null: there is none.
+    file: ?[]const u8 = null,
+    want: Tui,
+};
+
+test "parseTui: settings.json's defaults, a bad artwork value, unknown entries, AM_IMAGES winning, and a file that isn't valid JSON" {
+    const cases = [_]TuiCase{
+        // No file: every default.
+        .{ .want = .{ .artwork = .images, .images = .auto, .images_set = false, .unwritable = null, .problems = &.{} } },
+        .{ .file = "{}", .want = .{} },
+        .{ .file = "{\"artwork\": \"blocks\"}\n", .want = .{ .artwork = .blocks } },
+        .{ .file = "{\"artwork\": \"off\"}\n", .want = .{ .artwork = .off } },
+        .{ .file = "{\"artwork\": \"images\"}\n", .want = .{ .artwork = .images } },
+        // Any letter case, as AM_IMAGES.
+        .{ .file = "{\"artwork\": \"Blocks\"}\n", .want = .{ .artwork = .blocks } },
+        // A bad value falls back to images, with a problem that names it.
+        .{ .file = "{\"artwork\": \"kitty\"}\n", .want = .{ .artwork = .images, .problems = &.{
+            "artwork in settings.json must be \"images\", \"blocks\" or \"off\", not \"kitty\": showing images",
+        } } },
+        .{ .file = "{\"artwork\": false}\n", .want = .{ .artwork = .images, .problems = &.{
+            "artwork in settings.json must be \"images\", \"blocks\" or \"off\", not false: showing images",
+        } } },
+        // Entries am doesn't know (a later am's) are no problem.
+        .{ .file = "{\"keepEngine\": true, \"keys\": {\"lists\": {\"help\": [\"x\"]}}, \"artwork\": \"off\", \"later\": 1.50}", .want = .{ .artwork = .off } },
+        // AM_IMAGES wins over the file for the run, with every value it has.
+        .{ .images = .blocks, .file = "{\"artwork\": \"off\"}", .want = .{ .artwork = .blocks, .images_set = true } },
+        .{ .images = .off, .file = "{\"artwork\": \"blocks\"}", .want = .{ .artwork = .off, .images_set = true } },
+        .{ .images = .auto, .file = "{\"artwork\": \"off\"}", .want = .{ .artwork = .images, .images = .auto, .images_set = true } },
+        .{ .images = .kitty, .want = .{ .artwork = .images, .images = .kitty, .images_set = true } },
+        .{ .images = .placeholders, .want = .{ .artwork = .images, .images = .placeholders, .images_set = true } },
+        // Images then means the protocol AM_IMAGES names, also after v went to blocks (#12).
+        .{ .images = .placements, .file = "{\"artwork\": \"blocks\"}", .want = .{ .artwork = .images, .images = .placements, .images_set = true } },
+        // The file's bad entry is still named.
+        .{ .images = .blocks, .file = "{\"artwork\": \"big\"}", .want = .{ .artwork = .blocks, .images_set = true, .problems = &.{
+            "artwork in settings.json must be \"images\", \"blocks\" or \"off\", not \"big\": showing images",
+        } } },
+        // A file that isn't valid JSON: the defaults, and am never writes it.
+        .{ .file = "{\n  \"artwork\": \"off\",\n}\n", .want = .{ .artwork = .images, .unwritable = "settings.json isn't valid JSON", .problems = &.{
+            "settings.json isn't valid JSON (line 3, column 1): using the defaults and leaving the file alone",
+        } } },
+        .{ .file = "{\"artwork\": \"off\"", .want = .{ .unwritable = "settings.json isn't valid JSON", .problems = &.{
+            "settings.json isn't valid JSON (line 1, column 18): using the defaults and leaving the file alone",
+        } } },
+        .{ .file = "[\"off\"]", .want = .{ .unwritable = "settings.json isn't a JSON object", .problems = &.{
+            "settings.json isn't a JSON object ({ … }): using the defaults and leaving the file alone",
+        } } },
+        // AM_IMAGES still applies.
+        .{ .images = .blocks, .file = "artwork=off\n", .want = .{ .artwork = .blocks, .images_set = true, .unwritable = "settings.json isn't valid JSON", .problems = &.{
+            "settings.json isn't valid JSON (line 1, column 1): using the defaults and leaving the file alone",
+        } } },
+        // Nested deeper than a save could write back.
+        .{ .file = "{\"x\": " ++ @as([200]u8, @splat('[')) ++ @as([200]u8, @splat(']')) ++ "}", .want = .{ .unwritable = "settings.json nests more than 128 levels deep", .problems = &.{
+            "settings.json nests more than 128 levels deep: using the defaults and leaving the file alone",
+        } } },
+        // An empty file holds nothing to lose: it counts as `{}`.
+        .{ .file = "", .want = .{} },
+        .{ .file = " \n", .want = .{} },
+    };
+    for (cases, 0..) |case, i| {
+        errdefer std.debug.print("case {d}\n", .{i});
+        var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+        defer arena.deinit();
+        try testing.expectEqualDeep(case.want, try parseTui(arena.allocator(), case.images, case.file));
+    }
+}
+
+test "an artwork change lasts only for the session while AM_IMAGES is set or the file is never written" {
+    try testing.expectEqual(@as(?[]const u8, null), (Tui{}).artworkSessionOnly());
+    try testing.expectEqualStrings("settings.json isn't valid JSON", (Tui{ .unwritable = "settings.json isn't valid JSON" }).artworkSessionOnly().?);
+    try testing.expectEqualStrings("AM_IMAGES is set", (Tui{ .images_set = true, .unwritable = "settings.json isn't valid JSON" }).artworkSessionOnly().?);
+}
+
+test "applyChange: a fresh install's first change writes only that entry, and back to its default removes it" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const blocks = (try applyChange(a, null, .{ .artwork = .blocks })).text;
+    try testing.expectEqualStrings(
+        \\{
+        \\  "artwork": "blocks"
+        \\}
+        \\
+    , blocks);
+    try testing.expectEqualStrings("{}\n", (try applyChange(a, blocks, .{ .artwork = .images })).text);
+    // No file, and the default: nothing to write.
+    try testing.expectEqual(Applied.unchanged, try applyChange(a, null, .{ .artwork = .images }));
+}
+
+test "applyChange keeps a hand edit and the entries am doesn't know, in their order, numbers as written" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // As a later am, or a hand editor, left it while this TUI was open.
+    const now =
+        \\{"keepEngine": true, "artwork": "off",
+        \\ "keys": {"lists": {"help": ["x", "f1"], "quit": []}},
+        \\ "volumeStep": 1.50, "big": 123456789012345678901234567890, "name": "Zoë"}
+    ;
+    try testing.expectEqualStrings(
+        \\{
+        \\  "keepEngine": true,
+        \\  "artwork": "blocks",
+        \\  "keys": {
+        \\    "lists": {
+        \\      "help": [
+        \\        "x",
+        \\        "f1"
+        \\      ],
+        \\      "quit": []
+        \\    }
+        \\  },
+        \\  "volumeStep": 1.50,
+        \\  "big": 123456789012345678901234567890,
+        \\  "name": "Zoë"
+        \\}
+        \\
+    , (try applyChange(a, now, .{ .artwork = .blocks })).text);
+    // Back to the default: only that entry goes.
+    try testing.expectEqualStrings(
+        \\{
+        \\  "keepEngine": true
+        \\}
+        \\
+    , (try applyChange(a, "{\"keepEngine\": true, \"artwork\": \"off\"}", .{ .artwork = .images })).text);
+    // What the file says already: nothing to write, so its own layout stays.
+    try testing.expectEqual(Applied.unchanged, try applyChange(a, "{ \"artwork\" : \"off\" }", .{ .artwork = .off }));
+    try testing.expectEqual(Applied.unchanged, try applyChange(a, "{\"keepEngine\": true}", .{ .artwork = .images }));
+}
+
+test "applyChange refuses a file that isn't valid JSON, or that it couldn't write back" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try testing.expectEqualStrings("settings.json isn't valid JSON", (try applyChange(a, "{\"artwork\": \"off\",}", .{ .artwork = .blocks })).refused);
+    try testing.expectEqualStrings("settings.json isn't valid JSON", (try applyChange(a, "artwork=off", .{ .artwork = .images })).refused);
+    try testing.expectEqualStrings("settings.json isn't a JSON object", (try applyChange(a, "[]", .{ .artwork = .blocks })).refused);
+    const deep = "{\"x\": " ++ @as([129]u8, @splat('[')) ++ @as([129]u8, @splat(']')) ++ "}";
+    try testing.expectEqualStrings("settings.json nests more than 128 levels deep", (try applyChange(a, deep, .{ .artwork = .blocks })).refused);
+    // 128 levels, the object's own included, still write back.
+    const ok = "{\"x\": " ++ @as([127]u8, @splat('[')) ++ @as([127]u8, @splat(']')) ++ "}";
+    try testing.expect(try applyChange(a, ok, .{ .artwork = .blocks }) == .text);
+    // An empty file holds nothing to lose.
+    try testing.expectEqualStrings("{\n  \"artwork\": \"off\"\n}\n", (try applyChange(a, "\n", .{ .artwork = .off })).text);
+}
+
+test "saveChange reads settings.json again and writes it whole: a hand edit since start survives, a file that isn't valid JSON is left alone" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(io, &buf)];
+
+    try testing.expectEqual(Artwork.images, (try loadTui(io, a, dir, null)).artwork);
+    try testing.expectEqual(Saved.saved, try saveChange(io, a, dir, .{ .artwork = .blocks }));
+    try testing.expectEqualStrings("{\n  \"artwork\": \"blocks\"\n}\n", try tmp.dir.readFileAlloc(io, "settings.json", a, .limited(4096)));
+    try testing.expectEqual(Artwork.blocks, (try loadTui(io, a, dir, null)).artwork);
+
+    // Edited by hand while the TUI is open: the next save keeps the edit.
+    try tmp.dir.writeFile(io, .{ .sub_path = "settings.json", .data = "{\"keepEngine\": true, \"artwork\": \"blocks\"}" });
+    try testing.expectEqual(Saved.saved, try saveChange(io, a, dir, .{ .artwork = .off }));
+    try testing.expectEqualStrings("{\n  \"keepEngine\": true,\n  \"artwork\": \"off\"\n}\n", try tmp.dir.readFileAlloc(io, "settings.json", a, .limited(4096)));
+    try testing.expectEqual(Saved.unchanged, try saveChange(io, a, dir, .{ .artwork = .off }));
+
+    // Broken by hand: never written over.
+    try tmp.dir.writeFile(io, .{ .sub_path = "settings.json", .data = "{\"artwork\": \"off\"," });
+    const tui = try loadTui(io, a, dir, null);
+    try testing.expectEqualStrings("settings.json isn't valid JSON", tui.unwritable.?);
+    try testing.expectEqualStrings("settings.json isn't valid JSON", (try saveChange(io, a, dir, .{ .artwork = .blocks })).refused);
+    try testing.expectEqualStrings("{\"artwork\": \"off\",", try tmp.dir.readFileAlloc(io, "settings.json", a, .limited(4096)));
+}
+
+test "saveChange on a settings.json that links elsewhere (dotfiles) writes the file it points to, and the link stays" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const root = buf[0..try tmp.dir.realPath(io, &buf)];
+    try tmp.dir.createDirPath(io, "dotfiles");
+    try tmp.dir.createDirPath(io, "am");
+    try tmp.dir.writeFile(io, .{ .sub_path = "dotfiles/am.json", .data = "{\"artwork\": \"off\"}\n" });
+    try tmp.dir.symLink(io, "../dotfiles/am.json", "am/settings.json", .{});
+
+    const dir = try Io.Dir.path.join(a, &.{ root, "am" });
+    try testing.expectEqual(Artwork.off, (try loadTui(io, a, dir, null)).artwork);
+    try testing.expectEqual(Saved.saved, try saveChange(io, a, dir, .{ .artwork = .blocks }));
+    try testing.expectEqual(Io.File.Kind.sym_link, (try tmp.dir.statFile(io, "am/settings.json", .{ .follow_symlinks = false })).kind);
+    try testing.expectEqualStrings("{\n  \"artwork\": \"blocks\"\n}\n", try tmp.dir.readFileAlloc(io, "dotfiles/am.json", a, .limited(4096)));
 }
 
 test "the daemon starts with AM_PORT, ENGINE and ENGINE_IDLE_MINUTES, or refuses over the first bad one" {

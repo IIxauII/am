@@ -3,12 +3,14 @@
 //! background process or the terminal comes out as an `Effect` for the app to carry out; the
 //! app drains `effects` right after every call, while the slices in them are still valid.
 const std = @import("std");
+const graphics = @import("graphics.zig");
 const input = @import("input.zig");
 const keys = @import("keys.zig");
 const list_mod = @import("list.zig");
 const model = @import("../music/model.zig");
 const player = @import("../daemon/player.zig");
 const playstate = @import("playstate.zig");
+const settings = @import("../settings.zig");
 
 const Allocator = std.mem.Allocator;
 const Item = model.Item;
@@ -140,10 +142,25 @@ pub const Effect = union(enum) {
     go: struct { ref: Ref, artist: bool },
     quit: struct { stop: bool },
     redraw,
-    image_mode,
+    /// Draw artwork this way; the app picks the protocol for it.
+    set_artwork: graphics.Artwork,
+    /// Save one change to settings.json.
+    save_setting: settings.Change,
     toast: []const u8,
     /// Sign in to Apple Music again.
     signin,
+};
+
+/// The artwork setting, and what `v` does with it.
+pub const ArtworkState = struct {
+    /// What is drawn: settings.json's artwork, or `AM_IMAGES`'s for the run, then `v`'s picks.
+    setting: graphics.Artwork = .images,
+    /// Why `v` changes only the session (`AM_IMAGES is set`, `settings.json isn't valid JSON`);
+    /// null when it saves the setting.
+    session_only: ?[]const u8 = null,
+    /// What Images shows instead in this terminal, and why; null when it shows kitty images.
+    /// The app keeps it current.
+    fallback: ?graphics.Fallback = null,
 };
 
 pub const section_count = std.meta.fieldNames(Section).len;
@@ -173,6 +190,8 @@ pub const Ui = struct {
     has_sidebar: bool = true,
     /// Which keys run which action.
     bindings: keys.Bindings = .defaults,
+    /// Set by the app at start.
+    artwork: ArtworkState = .{},
     effects: std.ArrayList(Effect) = .empty,
     /// What effects point to that no view keeps (a queue's song ids); reset by `effectsDone`.
     scratch: std.heap.ArenaAllocator,
@@ -486,7 +505,7 @@ pub const Ui = struct {
             .info => {
                 if (u.selectedItem()) |it| u.showInfo(it.*) else u.toast("Nothing selected");
             },
-            .image_mode => u.emit(.image_mode),
+            .image_mode => u.cycleArtwork(),
             .help => {
                 u.overlay = .help;
                 u.help_scroll = 0;
@@ -498,6 +517,32 @@ pub const Ui = struct {
             .signin => u.emit(.signin),
         }
         _ = now_ms;
+    }
+
+    /// `v`: the next artwork setting, Images → Blocks → Off → Images, saved unless it can't be.
+    fn cycleArtwork(u: *Ui) void {
+        const a = &u.artwork;
+        a.setting = switch (a.setting) {
+            .images => .blocks,
+            .blocks => .off,
+            .off => .images,
+        };
+        u.emit(.{ .set_artwork = a.setting });
+        if (artworkMessage(u.scratch.allocator(), a.*)) |m| u.toast(m) else |_| {}
+        // Last: a save that fails has the last word.
+        if (a.session_only == null) u.emit(.{ .save_setting = .{ .artwork = a.setting } });
+    }
+
+    /// `Artwork: images (showing blocks: inside tmux)`, and why it isn't saved, if it isn't.
+    fn artworkMessage(arena: Allocator, a: ArtworkState) Allocator.Error![]const u8 {
+        var out: std.Io.Writer.Allocating = .init(arena);
+        const w = &out.writer;
+        w.print("Artwork: {t}", .{a.setting}) catch return error.OutOfMemory;
+        if (a.setting == .images) if (a.fallback) |f| {
+            w.print(" (showing {s}: {s})", .{ if (f.shows == .half_blocks) "blocks" else "nothing", f.why }) catch return error.OutOfMemory;
+        };
+        if (a.session_only) |why| w.print(", for this session only ({s})", .{why}) catch return error.OutOfMemory;
+        return out.written();
     }
 
     fn scrollHelp(u: *Ui, n: i32) void {
@@ -1276,6 +1321,69 @@ test "filter narrows the current list and Esc clears it" {
     u.key(.{ .code = .esc }, 0);
     try testing.expect(!u.textMode());
     try testing.expectEqual(@as(usize, 2), v.list.len());
+}
+
+/// `v`, the artwork key.
+fn pressArtwork(u: *Ui) void {
+    u.key(.char('v'), 0);
+}
+
+/// The home view open and its load taken, as when the TUI is up, so a key's effects are its own.
+fn openHome(u: *Ui) void {
+    _ = u.current();
+    u.effectsDone();
+}
+
+test "v cycles the artwork setting images → blocks → off → images and saves each pick" {
+    var u: Ui = .init(testing.allocator);
+    defer u.deinit();
+    openHome(&u);
+    for ([_]graphics.Artwork{ .blocks, .off, .images, .blocks }, [_][]const u8{ "Artwork: blocks", "Artwork: off", "Artwork: images", "Artwork: blocks" }) |want, message| {
+        pressArtwork(&u);
+        const e = takeEffects(&u);
+        try testing.expectEqual(@as(usize, 3), e.len);
+        try testing.expectEqual(want, e[0].set_artwork);
+        try testing.expectEqualStrings(message, e[1].toast);
+        // Last, so that a save that fails has the last word.
+        try testing.expectEqual(want, e[2].save_setting.artwork);
+        u.effectsDone();
+    }
+}
+
+test "v landing on Images says what is on screen instead, and why" {
+    var u: Ui = .init(testing.allocator);
+    defer u.deinit();
+    openHome(&u);
+    u.artwork = .{ .setting = .off, .fallback = .{ .shows = .half_blocks, .why = "inside tmux" } };
+    pressArtwork(&u);
+    try testing.expectEqualStrings("Artwork: images (showing blocks: inside tmux)", takeEffects(&u)[1].toast);
+    u.effectsDone();
+    pressArtwork(&u);
+    try testing.expectEqualStrings("Artwork: blocks", takeEffects(&u)[1].toast);
+    u.effectsDone();
+    u.artwork = .{ .setting = .off, .fallback = .{ .shows = .none, .why = "TERM=dumb" } };
+    pressArtwork(&u);
+    try testing.expectEqualStrings("Artwork: images (showing nothing: TERM=dumb)", takeEffects(&u)[1].toast);
+}
+
+test "with AM_IMAGES set, or a settings.json am can't write, v changes only the session and says why" {
+    var u: Ui = .init(testing.allocator);
+    defer u.deinit();
+    openHome(&u);
+    u.artwork = .{ .setting = .images, .session_only = "AM_IMAGES is set" };
+    pressArtwork(&u);
+    var e = takeEffects(&u);
+    try testing.expectEqual(@as(usize, 2), e.len);
+    try testing.expectEqual(graphics.Artwork.blocks, e[0].set_artwork);
+    try testing.expectEqualStrings("Artwork: blocks, for this session only (AM_IMAGES is set)", e[1].toast);
+    u.effectsDone();
+
+    u.artwork = .{ .setting = .off, .session_only = "settings.json isn't valid JSON", .fallback = .{ .shows = .half_blocks, .why = "inside tmux" } };
+    pressArtwork(&u);
+    e = takeEffects(&u);
+    try testing.expectEqual(@as(usize, 2), e.len);
+    try testing.expectEqual(graphics.Artwork.images, e[0].set_artwork);
+    try testing.expectEqualStrings("Artwork: images (showing blocks: inside tmux), for this session only (settings.json isn't valid JSON)", e[1].toast);
 }
 
 test "player keys become control effects; volume and mute are remembered" {

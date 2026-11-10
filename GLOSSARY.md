@@ -68,8 +68,12 @@ _Avoid_: stale token, page token
 ### Settings
 
 **Setting**:
-A choice about how am runs (`ENGINE`, `AM_IMAGES` …), read from the environment or the env file; the environment wins.
+A choice about how am runs. The background process's settings and `AM_IMAGES` are read from the environment, else the env file, and the environment wins. The TUI's own settings (keep-alive, artwork, bindings) are read from the settings file, and `AM_IMAGES` wins over its artwork.
 _Avoid_: option, config value
+
+**Settings file**:
+`settings.json` in am's config directory, holding only what differs from the defaults; the Settings page writes it and hand edits are supported.
+_Avoid_: config file, preferences
 
 **Env file**:
 The KEY=VALUE file `env` in am's config directory that holds settings.
