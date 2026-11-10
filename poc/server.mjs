@@ -13,6 +13,8 @@ import { getDeveloperToken } from './token.mjs'
 const WEB_DIR = join(import.meta.dirname, 'web')
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8' }
 const FILES = new Set(['/index.html', '/app.js'])
+// The WebSocket opcodes the report socket reads and sends (RFC 6455 §5.2).
+const OP = { continuation: 0x0, text: 0x1, binary: 0x2, close: 0x8, ping: 0x9, pong: 0xa }
 
 async function readJson(req) {
   let body = ''
@@ -40,9 +42,12 @@ export async function startServer() {
   // Refuse DNS-rebinding requests: only loopback host names may talk to the engine.
   const hostAllowed = (req) => /^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(req.headers.host ?? '')
 
+  // Whether a page's nonce is the current launch's; with no launch, none is.
+  const isCurrent = (nonce) => !!session && nonce === session
+
   // A report from the current page; one from another launch's is stale.
   function takeReport(report) {
-    if (report?.engine !== session) return false
+    if (!isCurrent(report?.engine)) return false
     lastReport = report
     lastReportAt = Date.now()
     for (const fn of listeners.report) fn(lastReport)
@@ -58,10 +63,11 @@ export async function startServer() {
     const refuse = (status) => socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`)
     if (!hostAllowed(req)) return refuse('403 Forbidden')
     if (url.pathname !== '/reports' || !key) return refuse('404 Not Found')
-    if (!session || url.searchParams.get('engine') !== session) return refuse('409 Conflict')
+    if (!isCurrent(url.searchParams.get('engine'))) return refuse('409 Conflict')
     const accept = createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64')
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
     const frame = (opcode, payload) => socket.write(Buffer.concat([Buffer.from([0x80 | opcode, payload.length]), payload]))
+    const close = (payload) => (frame(OP.close, payload), socket.end())
     let input = Buffer.alloc(0)
     let fragments = []
     socket.on('error', () => {})
@@ -77,9 +83,10 @@ export async function startServer() {
         const payload = input.subarray(at + 4, at + 4 + len).map((b, i) => b ^ mask[i % 4])
         const [fin, opcode] = [input[0] & 0x80, input[0] & 0x0f]
         input = input.subarray(at + 4 + len)
-        if (opcode === 0x8) return frame(0x8, payload.subarray(0, 2)), socket.end()
-        if (opcode === 0x9) frame(0xa, payload)
-        if (opcode > 0x2) continue
+        // With the page's status code back, as RFC 6455 asks.
+        if (opcode === OP.close) return close(payload.subarray(0, 2))
+        if (opcode === OP.ping) frame(OP.pong, payload)
+        if (![OP.continuation, OP.text, OP.binary].includes(opcode)) continue
         fragments.push(payload)
         if (!fin) continue
         const text = Buffer.concat(fragments).toString()
@@ -90,8 +97,12 @@ export async function startServer() {
         } catch {
           continue
         }
-        // The launch is over: so is its socket.
-        if (!takeReport(report)) return frame(0x8, Buffer.from([0x03, 0xf0])), socket.end()
+        // The launch is over: so is its socket, with 1008 (policy violation).
+        if (!takeReport(report)) {
+          const code = Buffer.alloc(2)
+          code.writeUInt16BE(1008)
+          return close(code)
+        }
       }
     })
   }
@@ -105,10 +116,10 @@ export async function startServer() {
     if (path === '/claim') {
       // A relaunched Firefox may restore the previous engine page next to the new one;
       // only the page carrying this launch's nonce may run.
-      return res.writeHead(session && fromSession === session ? 204 : 409, headers).end()
+      return res.writeHead(isCurrent(fromSession) ? 204 : 409, headers).end()
     }
     if (path === '/events') {
-      if (!session || fromSession !== session) return res.writeHead(409, headers).end()
+      if (!isCurrent(fromSession)) return res.writeHead(409, headers).end()
       res.writeHead(200, { ...headers, 'Content-Type': 'text/event-stream', Connection: 'keep-alive' })
       res.write(': connected\n\n')
       streams.add(res)

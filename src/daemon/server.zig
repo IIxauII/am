@@ -405,7 +405,7 @@ fn readFrameHead(in: *Io.Reader) !FrameHead {
 
 /// A control frame's payload, read into `buffer`. Control frames come whole, with at most 125 bytes.
 fn readControl(in: *Io.Reader, frame: FrameHead, buffer: *[125]u8) ![]u8 {
-    if (!frame.fin or frame.len > buffer.len) return error.UnexpectedOpCode;
+    if (!frame.fin or frame.len > buffer.len) return error.InvalidControlFrame;
     const payload = buffer[0..@intCast(frame.len)];
     try in.readSliceAll(payload);
     unmask(payload, frame.mask);
@@ -640,7 +640,7 @@ test "a CLI request names its client with X-AM-Client; an empty one names none" 
     try testing.expectEqual(null, t.fake.client);
 }
 
-test "a foreign Origin gets 403 on the token, report and result routes; the page's own works" {
+test "a foreign Origin gets 403 on the token and result routes and the report socket; the page's own works" {
     var t: TestServer = undefined;
     try t.start();
     defer t.stop();
