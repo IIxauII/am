@@ -96,7 +96,8 @@ pub const Reply = struct {
         return .{ .arena = arena, .out = &sink.writer, .flushFn = noFlush, .flush_ctx = sink };
     }
 
-    fn noFlush(_: *anyopaque) Io.Writer.Error!void {}
+    /// The flush of a reply whose writer needs none (`discarding`, the tests' replies).
+    pub fn noFlush(_: *anyopaque) Io.Writer.Error!void {}
 
     /// Ends the endpoint with a failure: the CLI prints `error: <message>` and exits 1.
     pub fn fail(r: *Reply, comptime fmt: []const u8, args: anytype) Error {

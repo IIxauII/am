@@ -1033,6 +1033,23 @@ pub const FakeLauncher = struct {
         fl.logged.deinit(fl.fp.gpa);
     }
 
+    /// How many launches started an engine so far; fine while a caller may still launch.
+    pub fn launchCount(fl: *FakeLauncher) u32 {
+        const io = fl.fp.io;
+        fl.mutex.lockUncancelable(io);
+        defer fl.mutex.unlock(io);
+        return fl.launches;
+    }
+
+    /// Launches fail with `why` from now on, or no longer (null); fine while a caller may
+    /// still launch.
+    pub fn setRefuse(fl: *FakeLauncher, why: ?[]const u8) void {
+        const io = fl.fp.io;
+        fl.mutex.lockUncancelable(io);
+        defer fl.mutex.unlock(io);
+        fl.refuse = why;
+    }
+
     fn of(ptr: *anyopaque) *FakeLauncher {
         return @ptrCast(@alignCast(ptr));
     }

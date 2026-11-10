@@ -164,8 +164,9 @@ const tick: Io.Duration = .fromMilliseconds(250);
 const footprint_window: Io.Duration = .fromSeconds(1);
 
 /// When to close the engine (the idle close): once nothing has been playing for `limit`.
-/// "Nothing playing" is paused, stopped or never started. CLI requests that use the engine, and
-/// keep-engine requests (keep-alive), count as activity for as long as they are open.
+/// "Nothing playing" is paused, stopped or never started. CLI requests that use the engine count
+/// as activity for as long as they run, and keep-engine requests (keep-alive) for as long as
+/// their client is there.
 pub const IdleTimer = struct {
     limit: Io.Duration,
     last_active: Io.Timestamp,
@@ -344,7 +345,7 @@ pub const Requests = struct {
 
     /// For `stop-if-unused`: whether `asker`'s own client holds a keep-engine request open,
     /// noticed closing or not.
-    pub fn ownKeepAlive(q: *Requests, io: Io, asker: *const Ticket) bool {
+    pub fn askerHoldsKeepAlive(q: *Requests, io: Io, asker: *const Ticket) bool {
         q.mutex.lockUncancelable(io);
         defer q.mutex.unlock(io);
         var it = q.open;
@@ -393,7 +394,8 @@ pub const EngineView = struct {
     /// starting, is on its way to nothing.
     own_play_stopped: bool = false,
     /// The quitting TUI holds a keep-engine request, and nothing besides it uses the daemon: a
-    /// page still loading is that request's launch, on its way to nothing.
+    /// page still loading is that request's launch, on its way to nothing. Its last report
+    /// still counts: a page whose stream dropped may be playing.
     own_keep_alive: bool = false,
 };
 
@@ -405,14 +407,15 @@ const stale_report_ms = 5000;
 /// open or a sign-in waiting, or a page that stopped reporting (it may be playing). A page
 /// loading or a song starting is nobody's once the quitting TUI's own play was stopped
 /// (`EngineView.own_play_stopped`), and a page loading is nobody's when the quitting TUI's own
-/// keep-alive launched it (`EngineView.own_keep_alive`).
+/// keep-alive launched it (`EngineView.own_keep_alive`). Such a page that isn't ready still
+/// counts by its last report: one whose stream dropped may be playing.
 pub fn engineInUse(e: EngineView, signins_waiting: u32) ?[]const u8 {
     if (signins_waiting > 0) return "a sign-in is waiting";
     if (!e.running) return null;
     if (e.signin_window) return "a sign-in window is open";
     const loading: ?[]const u8 = if (e.own_play_stopped or e.own_keep_alive) null else "the engine is loading";
     const r = e.report orelse return loading;
-    if (!e.ready) return loading;
+    if (!e.ready) if (loading) |why| return why;
     if (e.report_age_ms > stale_report_ms) return "the engine page stopped reporting";
     return switch (r.music()) {
         .playing => "music is playing",
@@ -1070,7 +1073,7 @@ pub const Daemon = struct {
         view.own_play_stopped = own_play_stopped;
         // Nothing else uses the daemon and no play is on its way: a page still loading is the
         // launch of the quitting TUI's own keep-alive.
-        view.own_keep_alive = d.requests.ownKeepAlive(d.io, asker);
+        view.own_keep_alive = d.requests.askerHoldsKeepAlive(d.io, asker);
         if (view.running and view.ready) if (fresh) |report| {
             view.report = report;
             view.report_age_ms = 0;
@@ -1865,12 +1868,12 @@ test "stop-if-unused: the quitting TUI holds keep-alive when a keep-engine reque
     try testing.expect(q.begin(io, at(2), &anonymous));
     try testing.expect(q.begin(io, at(3), &own_watch));
     try testing.expect(q.begin(io, at(4), &asker));
-    try testing.expect(!q.ownKeepAlive(io, &asker));
+    try testing.expect(!q.askerHoldsKeepAlive(io, &asker));
     var own: Requests.Ticket = .{ .client_gone = &gone, .client_id = "0123456789abcdef", .keeps_engine = true };
     try testing.expect(q.begin(io, at(5), &own));
-    try testing.expect(q.ownKeepAlive(io, &asker));
+    try testing.expect(q.askerHoldsKeepAlive(io, &asker));
     q.end(io, at(6), &own);
-    try testing.expect(!q.ownKeepAlive(io, &asker));
+    try testing.expect(!q.askerHoldsKeepAlive(io, &asker));
 }
 
 fn endLater(q: *Requests, t: *Requests.Ticket) Io.Cancelable!void {
@@ -1906,6 +1909,12 @@ test "once the quitting TUI's own play is stopped, a page still loading or a son
     var not_ready = stopped;
     not_ready.report = .{ .state = .none };
     try testing.expectEqual(null, engineInUse(not_ready, 0));
+    // The page's stream is down: its last report still counts.
+    var dropped = not_ready;
+    dropped.report = .{ .state = .playing };
+    try testing.expectEqualStrings("music is playing", engineInUse(dropped, 0).?);
+    dropped.report = .{ .state = .loading };
+    try testing.expectEqual(null, engineInUse(dropped, 0));
     var starting = stopped;
     starting.ready = true;
     starting.report = .{ .state = .loading };
@@ -1924,12 +1933,21 @@ test "once the quitting TUI's own play is stopped, a page still loading or a son
     try testing.expectEqualStrings("a sign-in window is open", engineInUse(window, 0).?);
 }
 
-test "a page still loading for the quitting TUI's own keep-alive keeps nothing; music playing, a song starting or a silent page still does" {
+test "a page still loading for the quitting TUI's own keep-alive keeps nothing; music playing, a song starting or a silent page still does, its stream dropped or not" {
     const own: EngineView = .{ .running = true, .own_keep_alive = true };
     try testing.expectEqual(null, engineInUse(own, 0));
     var not_ready = own;
     not_ready.report = .{ .state = .none };
     try testing.expectEqual(null, engineInUse(not_ready, 0));
+    // Music from `am play` while the page's stream is down: its last report says so.
+    var dropped = not_ready;
+    dropped.report = .{ .state = .playing };
+    try testing.expectEqualStrings("music is playing", engineInUse(dropped, 0).?);
+    dropped.report = .{ .state = .loading };
+    try testing.expectEqualStrings("a song is starting", engineInUse(dropped, 0).?);
+    dropped.report = .{ .state = .paused, .nowPlaying = .{} };
+    dropped.report_age_ms = 9000;
+    try testing.expectEqualStrings("the engine page stopped reporting", engineInUse(dropped, 0).?);
     var ready = own;
     ready.ready = true;
     ready.report = .{ .state = .none };

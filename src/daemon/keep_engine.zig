@@ -1,7 +1,7 @@
 //! The `keep-engine` endpoint: keep-alive's side in the background process. A TUI with
 //! keep-alive on holds one open, naming its session as its other requests do. While it is open
 //! and its client is there, the daemon counts it as engine use (`Requests.keepers`), so the idle
-//! close can't fire; once the last one closes, the idle rules restart from then.
+//! close can't fire; once the last one closes, the idle limit counts from then.
 //!
 //! On open it launches the engine and waits for its page, as `am doctor` does, but prints
 //! nothing and repairs nothing. It never launches again: an engine that fails to start, exits on
@@ -47,7 +47,8 @@ const Deadline = @import("../deadline.zig").Deadline;
 const PageHost = fake.PageHost;
 const Rig = fake.Rig;
 
-/// Every wait shortened, as the rig's.
+/// Its step shortened, as the rig's waits are; the heartbeat stays at 15 s, longer than any of
+/// these tests.
 const quick: Options = .{ .step = .fromMilliseconds(5) };
 
 /// A keep-engine request held open on a task, as the server runs one for a TUI: its client is
@@ -122,7 +123,7 @@ test "keep-engine launches the engine, printing nothing and repairing nothing, a
     var held: Held = undefined;
     try held.open(&ph);
     try pageReady(&rig);
-    try testing.expectEqual(@as(u32, 1), rig.launcher.launches);
+    try testing.expectEqual(@as(u32, 1), rig.launcher.launchCount());
     try manySteps();
     try testing.expect(held.isOpen());
     const printed = try held.close();
@@ -138,20 +139,16 @@ test "a keep-engine whose engine doesn't start stays open, prints nothing, and d
     rig.init(Rig.timing);
     defer rig.deinit();
     var ph: PageHost = .{ .rig = &rig };
-    rig.launcher.refuse = "firefox not found; install it or set FIREFOX_PATH";
+    rig.launcher.setRefuse("firefox not found; install it or set FIREFOX_PATH");
     var held: Held = undefined;
     try held.open(&ph);
     // Only the daemon's log says why.
     try logged(&ph, "keep-alive: the engine didn't start: firefox not found; install it or set FIREFOX_PATH");
     // A launch would work now: none is tried.
-    {
-        rig.launcher.mutex.lockUncancelable(rig.io);
-        defer rig.launcher.mutex.unlock(rig.io);
-        rig.launcher.refuse = null;
-    }
+    rig.launcher.setRefuse(null);
     try manySteps();
     try testing.expect(held.isOpen());
-    try testing.expectEqual(@as(u32, 0), rig.launcher.launches);
+    try testing.expectEqual(@as(u32, 0), rig.launcher.launchCount());
     const printed = try held.close();
     try testing.expectEqual(@as(u8, 0), printed.code);
     try testing.expectEqualStrings("", printed.out);
@@ -168,7 +165,7 @@ test "keep-engine holds an engine already running as it is and launches none aft
     var held: Held = undefined;
     try held.open(&ph);
     try manySteps();
-    try testing.expectEqual(@as(u32, 1), rig.launcher.launches);
+    try testing.expectEqual(@as(u32, 1), rig.launcher.launchCount());
     try testing.expectEqualStrings(load, rig.fp.current());
     try testing.expectEqual(@as(usize, 0), rig.fp.callCount());
 
@@ -176,10 +173,10 @@ test "keep-engine holds an engine already running as it is and launches none aft
     rig.launcher.stop();
     try manySteps();
     try testing.expect(held.isOpen());
-    try testing.expectEqual(@as(u32, 1), rig.launcher.launches);
+    try testing.expectEqual(@as(u32, 1), rig.launcher.launchCount());
     // The next play launches it.
     try ph.warm();
-    try testing.expectEqual(@as(u32, 2), rig.launcher.launches);
+    try testing.expectEqual(@as(u32, 2), rig.launcher.launchCount());
 
     const printed = try held.shutDown();
     try testing.expectEqual(@as(u8, 1), printed.code);
@@ -194,8 +191,6 @@ test "where the server can't tell its client went, keep-engine notices at its ne
     var ph: PageHost = .{ .rig = &rig };
     try ph.warm();
     var gone: Io.Writer = .failing;
-    var r: Reply = .{ .arena = rig.newArena(), .out = &gone, .flushFn = noFlush, .flush_ctx = &gone };
+    var r: Reply = .{ .arena = rig.newArena(), .out = &gone, .flushFn = Reply.noFlush, .flush_ctx = &gone };
     try testing.expectError(error.WriteFailed, run(ph.host(), testing.io, &r, .{ .step = .fromMilliseconds(5), .heartbeat = .fromMilliseconds(20) }));
 }
-
-fn noFlush(_: *anyopaque) Io.Writer.Error!void {}
