@@ -45,6 +45,7 @@ test {
     _ = @import("daemon/play.zig");
     _ = @import("daemon/control.zig");
     _ = @import("daemon/player.zig");
+    _ = @import("daemon/keep_engine.zig");
     _ = engine_page;
 }
 
@@ -162,9 +163,9 @@ const tick: Io.Duration = .fromMilliseconds(250);
 /// How long `am status` measures CPU use over.
 const footprint_window: Io.Duration = .fromSeconds(1);
 
-/// When to close the engine: once nothing has been playing for `limit`. "Nothing playing" is
-/// paused, stopped or never started. CLI requests that use the engine count as activity for as
-/// long as they run.
+/// When to close the engine (the idle close): once nothing has been playing for `limit`.
+/// "Nothing playing" is paused, stopped or never started. CLI requests that use the engine, and
+/// keep-engine requests (keep-alive), count as activity for as long as they are open.
 pub const IdleTimer = struct {
     limit: Io.Duration,
     last_active: Io.Timestamp,
@@ -186,9 +187,18 @@ pub const IdleTimer = struct {
         t.touch(now);
     }
 
-    /// Call on every tick; `playing` comes from the engine page's latest report.
-    pub fn expired(t: *IdleTimer, now: Io.Timestamp, playing: bool) bool {
-        if (playing or t.busy > 0) t.touch(now);
+    /// What holds the engine open on a tick, besides the CLI requests in `busy`.
+    pub const Holds = struct {
+        /// Music plays, from the engine page's latest report.
+        playing: bool = false,
+        /// A keep-engine request is open (`Requests.keepers`).
+        kept: bool = false,
+    };
+
+    /// Call on every tick. Once nothing holds the engine, the limit counts from the last tick
+    /// that something did.
+    pub fn expired(t: *IdleTimer, now: Io.Timestamp, holds: Holds) bool {
+        if (holds.playing or holds.kept or t.busy > 0) t.touch(now);
         return t.remaining(now).nanoseconds <= 0;
     }
 
@@ -220,6 +230,10 @@ pub const Requests = struct {
         outlives_client: bool = false,
         /// It uses the engine (a pause, a seek): what it asks may not show in the page's state yet.
         uses_engine: bool = false,
+        /// A keep-engine request: it holds the engine open while its client is there
+        /// (`Requests.keepers`). Nothing it asks is on its way, so `stop-if-unused` never
+        /// waits for it.
+        keeps_engine: bool = false,
         /// The client it names itself as (a TUI session), if it does.
         client_id: ?[]const u8 = null,
         next: ?*Ticket = null,
@@ -313,6 +327,19 @@ pub const Requests = struct {
         if (q.timer.remaining(now).nanoseconds > 0) return false;
         q.closed = true;
         return true;
+    }
+
+    /// The keep-engine requests open whose client is still there: the idle close waits while
+    /// there is one. One whose client left isn't counted, even before its handler ends.
+    pub fn keepers(q: *Requests, io: Io) u32 {
+        q.mutex.lockUncancelable(io);
+        defer q.mutex.unlock(io);
+        var n: u32 = 0;
+        var it = q.open;
+        while (it) |t| : (it = t.next) {
+            if (t.keeps_engine and !t.clientGone()) n += 1;
+        }
+        return n;
     }
 
     /// Whether an open request besides `asker` is in use (see `Ticket.inUseFor`).
@@ -793,18 +820,26 @@ pub const Daemon = struct {
             d.stopEngineLocked();
             return false;
         }
-        // Only music that plays holds the engine open, as `am status` says
-        // (`playback.Music.keepsEngineOpen`).
+        // What holds the engine open, as `am status` says: music that plays
+        // (`playback.Music.keepsEngineOpen`), and keep-alive.
         const playing = blk: {
             const last = (d.channel.lastReport(arena) catch null) orelse break :blk false;
             const report = playback.parseReport(arena, last.json) orelse break :blk false;
             break :blk report.music().keepsEngineOpen();
         };
-        if (d.idle.expired(d.now(), playing)) {
+        if (d.idle.expired(d.now(), .{ .playing = playing, .kept = d.keepEngineRequestsLocked() > 0 })) {
             d.log("nothing played for {d} min: closing the engine", .{@divFloor(d.idle.limit.toSeconds(), 60)});
             d.stopEngineLocked();
         }
         return false;
+    }
+
+    /// The keep-engine requests holding what runs (`Requests.keepers`). Keep-alive holds the
+    /// engine, not a sign-in window: that one closes as it always has.
+    fn keepEngineRequestsLocked(d: *Daemon) u32 {
+        const r = if (d.running) |*r| r else return 0;
+        if (r.signin_window) return 0;
+        return d.requests.keepers(d.io);
     }
 
     /// Brackets a CLI request that uses the engine: the idle close waits until it's done.
@@ -963,6 +998,7 @@ pub const Daemon = struct {
             .client_gone = reply.client_gone,
             .outlives_client = endpoint.outlives_client,
             .uses_engine = endpoint.uses_engine,
+            .keeps_engine = endpoint.keeps_engine,
             .client_id = reply.client_id,
         };
         if (!d.requests.begin(d.io, d.now(), &ticket)) {
@@ -1171,6 +1207,7 @@ pub const Daemon = struct {
                 .headless = d.settings.engine_headless and !r.signin_window,
                 .signin_window = r.signin_window,
                 .idle_close_in_s = @max(0, d.idle.remaining(d.now()).toSeconds()),
+                .keep_engine_requests = d.keepEngineRequestsLocked(),
             };
         }
         if (try d.channel.lastReport(arena)) |last| {
@@ -1497,44 +1534,56 @@ test "the build id is 16 hex digits, the same every time for the same binary" {
 
 test "the engine closes once nothing has played for the idle limit" {
     var timer: IdleTimer = .{ .limit = .fromSeconds(60), .last_active = at(0) };
-    try testing.expect(!timer.expired(at(30), false));
-    try testing.expect(!timer.expired(at(59), false));
-    try testing.expect(timer.expired(at(60), false));
+    try testing.expect(!timer.expired(at(30), .{}));
+    try testing.expect(!timer.expired(at(59), .{}));
+    try testing.expect(timer.expired(at(60), .{}));
 }
 
 test "playing, and CLI commands, push the idle close back" {
     var timer: IdleTimer = .{ .limit = .fromSeconds(60), .last_active = at(0) };
     // Playing from 0:50 to 3:00: never idle meanwhile.
-    try testing.expect(!timer.expired(at(50), true));
-    try testing.expect(!timer.expired(at(180), true));
+    try testing.expect(!timer.expired(at(50), .{ .playing = true }));
+    try testing.expect(!timer.expired(at(180), .{ .playing = true }));
     // Paused at 3:00: closes a minute later.
-    try testing.expect(!timer.expired(at(200), false));
+    try testing.expect(!timer.expired(at(200), .{}));
     try testing.expectEqual(@as(i64, 40), timer.remaining(at(200)).toSeconds());
     timer.touch(at(230));
-    try testing.expect(!timer.expired(at(280), false));
-    try testing.expect(timer.expired(at(290), false));
+    try testing.expect(!timer.expired(at(280), .{}));
+    try testing.expect(timer.expired(at(290), .{}));
     // An older activity never moves the clock back.
     timer.touch(at(10));
-    try testing.expect(timer.expired(at(290), false));
+    try testing.expect(timer.expired(at(290), .{}));
 }
 
 test "a CLI request that uses the engine keeps it open for as long as it runs" {
     var timer: IdleTimer = .{ .limit = .fromSeconds(60), .last_active = at(0) };
     timer.begin(at(10));
     // A doctor waiting minutes for Widevine.
-    try testing.expect(!timer.expired(at(100), false));
-    try testing.expect(!timer.expired(at(300), false));
+    try testing.expect(!timer.expired(at(100), .{}));
+    try testing.expect(!timer.expired(at(300), .{}));
     timer.end(at(310));
-    try testing.expect(!timer.expired(at(369), false));
-    try testing.expect(timer.expired(at(370), false));
+    try testing.expect(!timer.expired(at(369), .{}));
+    try testing.expect(timer.expired(at(370), .{}));
 
     // Two at once: open until both are done.
     timer.begin(at(400));
     timer.begin(at(410));
     timer.end(at(420));
-    try testing.expect(!timer.expired(at(600), false));
+    try testing.expect(!timer.expired(at(600), .{}));
     timer.end(at(600));
-    try testing.expect(timer.expired(at(660), false));
+    try testing.expect(timer.expired(at(660), .{}));
+}
+
+test "a keep-engine request holds the idle close while it is open; once none does, the idle limit runs from then" {
+    var timer: IdleTimer = .{ .limit = .fromSeconds(60), .last_active = at(0) };
+    // A TUI with keep-alive on holds the engine from 0:10 for an hour, nothing playing.
+    try testing.expect(!timer.expired(at(10), .{ .kept = true }));
+    try testing.expect(!timer.expired(at(1800), .{ .kept = true }));
+    try testing.expect(!timer.expired(at(3600), .{ .kept = true }));
+    // None holds it from 1:00:00: today's idle rules, from then.
+    try testing.expect(!timer.expired(at(3659), .{}));
+    try testing.expectEqual(@as(i64, 1), timer.remaining(at(3659)).toSeconds());
+    try testing.expect(timer.expired(at(3660), .{}));
 }
 
 fn requestsAt(seconds: i64) Requests {
@@ -1563,6 +1612,30 @@ test "with no engine, the daemon exits once nothing used it for the idle limit; 
     try testing.expect(!q.begin(io, at(961), &late));
 }
 
+test "the keep-engine requests open are counted while their client is there: two TUIs keep the engine while either is open" {
+    const io = testing.io;
+    var q = requestsAt(0);
+    var first_gone: std.atomic.Value(bool) = .init(false);
+    var second_gone: std.atomic.Value(bool) = .init(false);
+    var watch: Requests.Ticket = .{ .client_gone = &first_gone, .client_id = "0123456789abcdef" };
+    var first: Requests.Ticket = .{ .client_gone = &first_gone, .client_id = "0123456789abcdef", .keeps_engine = true };
+    var second: Requests.Ticket = .{ .client_gone = &second_gone, .client_id = "fedcba9876543210", .keeps_engine = true };
+    // A TUI's watch holds nothing.
+    try testing.expect(q.begin(io, at(1), &watch));
+    try testing.expectEqual(@as(u32, 0), q.keepers(io));
+    try testing.expect(q.begin(io, at(2), &first));
+    try testing.expect(q.begin(io, at(3), &second));
+    try testing.expectEqual(@as(u32, 2), q.keepers(io));
+    // The first TUI quits: its request isn't kept from then, before it ends.
+    first_gone.store(true, .release);
+    try testing.expectEqual(@as(u32, 1), q.keepers(io));
+    q.end(io, at(4), &first);
+    q.end(io, at(4), &watch);
+    try testing.expectEqual(@as(u32, 1), q.keepers(io));
+    q.end(io, at(5), &second);
+    try testing.expectEqual(@as(u32, 0), q.keepers(io));
+}
+
 test "a request that doesn't use the engine pushes the exit back, not the engine's idle close" {
     const io = testing.io;
     var idle: IdleTimer = .{ .limit = .fromSeconds(60), .last_active = at(0) };
@@ -1571,7 +1644,7 @@ test "a request that doesn't use the engine pushes the exit back, not the engine
     var status: Requests.Ticket = .{};
     try testing.expect(q.begin(io, at(50), &status));
     q.end(io, at(51), &status);
-    try testing.expect(idle.expired(at(60), false));
+    try testing.expect(idle.expired(at(60), .{}));
     try testing.expect(!q.closeIfUnused(io, &idle, at(110)));
     try testing.expect(q.closeIfUnused(io, &idle, at(111)));
     // Closed by a stop meanwhile: refused as well.
@@ -1737,6 +1810,27 @@ test "stop-if-unused: a pause sent just before quitting lands first, for a bound
     try q.settle(io, &asker, .fromSeconds(10));
     try ender.await(io);
     try testing.expect(start.untilNow(io).raw.toMilliseconds() < 5000);
+    try testing.expect(q.closeIfAlone(io, &asker));
+}
+
+test "stop-if-unused: the quitting TUI's own keep-engine request isn't counted or waited for; another TUI's keeps the daemon" {
+    const io = testing.io;
+    var q = requestsAt(0);
+    var not_yet: std.atomic.Value(bool) = .init(false);
+    var own: Requests.Ticket = .{ .client_gone = &not_yet, .client_id = "0123456789abcdef", .keeps_engine = true };
+    var other: Requests.Ticket = .{ .client_gone = &not_yet, .client_id = "fedcba9876543210", .keeps_engine = true };
+    var asker: Requests.Ticket = .{ .client_id = "0123456789abcdef" };
+    try testing.expect(q.begin(io, at(1), &own));
+    try testing.expect(q.begin(io, at(2), &other));
+    try testing.expect(q.begin(io, at(3), &asker));
+    try testing.expect(q.othersInUse(io, &asker));
+    try testing.expect(!q.closeIfAlone(io, &asker));
+    q.end(io, at(4), &other);
+    // Its own closes with it, however long its close goes unnoticed: no wait for it to end.
+    const start: Io.Clock.Timestamp = .now(io, .awake);
+    try q.settle(io, &asker, .fromSeconds(10));
+    try testing.expect(start.untilNow(io).raw.toMilliseconds() < 5000);
+    try testing.expect(!q.othersInUse(io, &asker));
     try testing.expect(q.closeIfAlone(io, &asker));
 }
 

@@ -1382,6 +1382,9 @@ pub const PageHost = struct {
     signin_window: bool = false,
     /// What the engine's idle close says while one runs.
     idle_close_in_s: i64 = 300,
+    /// The keep-engine requests holding the engine while one runs, as `Requests.keepers` counts
+    /// them; a sign-in window has none.
+    keep_engine_requests: u32 = 0,
     /// The daemon's clock is this far ahead of the page's last report: as if the page had
     /// stopped reporting that long ago.
     report_older_by_ms: u64 = 0,
@@ -1500,7 +1503,7 @@ pub const PageHost = struct {
             rig.launcher.mutex.lockUncancelable(rig.io);
             defer rig.launcher.mutex.unlock(rig.io);
             if (rig.launcher.live) |live| if (rig.channel.currentLaunch() == live.generation) {
-                s.engine = .{ .kind = "firefox", .pid = live.pid, .headless = true, .signin_window = false, .idle_close_in_s = ph.idle_close_in_s };
+                s.engine = .{ .kind = "firefox", .pid = live.pid, .headless = true, .signin_window = false, .idle_close_in_s = ph.idle_close_in_s, .keep_engine_requests = ph.keep_engine_requests };
             };
         }
         if (try rig.channel.lastReport(arena)) |last| {

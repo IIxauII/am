@@ -11,6 +11,7 @@ const std = @import("std");
 const daemon = @import("../daemon.zig");
 const control = @import("control.zig");
 const doctor = @import("doctor.zig");
+const keep_engine = @import("keep_engine.zig");
 const play = @import("play.zig");
 const player = @import("player.zig");
 const protocol = @import("protocol.zig");
@@ -29,6 +30,10 @@ pub const Endpoint = struct {
     /// TUI that quits with q stops its own queue first, while nothing is audible from it yet
     /// (`Daemon.stopIfUnused`, #55).
     outlives_client: bool = false,
+    /// Holds the engine open while its client is there, so the idle close waits (keep-alive).
+    /// Unlike `uses_engine`, nothing it asks of the engine is on its way: `stop-if-unused`
+    /// doesn't wait for it, and doesn't count the quitting TUI's own.
+    keeps_engine: bool = false,
     run: *const fn (d: *Daemon, r: *Reply, body: []const u8) Reply.Error!void,
 };
 
@@ -54,6 +59,8 @@ pub const all = [_]Endpoint{
     .{ .name = "queue", .uses_engine = true, .outlives_client = true, .run = runQueue },
     .{ .name = "control", .uses_engine = true, .run = runControl },
     .{ .name = "queue-items", .run = runQueueItems },
+    // Keep-alive: the TUI holds it open while the setting is on.
+    .{ .name = "keep-engine", .keeps_engine = true, .run = runKeepEngine },
 };
 
 pub fn find(name: []const u8) ?*const Endpoint {
@@ -87,6 +94,10 @@ fn runControl(d: *Daemon, r: *Reply, body: []const u8) Reply.Error!void {
 fn runQueueItems(d: *Daemon, r: *Reply, body: []const u8) Reply.Error!void {
     const request = try parseBody(player.ItemsRequest, r, body);
     return player.queueItems(d.playbackHost(), r, request);
+}
+
+fn runKeepEngine(d: *Daemon, r: *Reply, _: []const u8) Reply.Error!void {
+    return keep_engine.run(d.playbackHost(), d.io, r, .{});
 }
 
 /// The daemon shuts down once the reply is sent; `am daemon stop` waits for the port to close.
@@ -148,5 +159,8 @@ fn parseBody(comptime T: type, r: *Reply, body: []const u8) Reply.Error!T {
 test "endpoint names are unique" {
     for (all, 0..) |a, i| for (all[i + 1 ..]) |b| try std.testing.expect(!std.mem.eql(u8, a.name, b.name));
     try std.testing.expect(find("doctor").?.uses_engine);
+    // It holds the engine, but asks nothing of it that `stop-if-unused` would wait for.
+    try std.testing.expect(find("keep-engine").?.keeps_engine);
+    try std.testing.expect(!find("keep-engine").?.uses_engine);
     try std.testing.expectEqual(null, find("call"));
 }
