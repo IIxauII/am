@@ -2,7 +2,9 @@
 //!
 //! Escape sequences can be split across reads, so the decoder keeps what it can't finish yet.
 //! A lone ESC is ambiguous (the Escape key, or the start of a sequence): the app calls
-//! `flushPending` after ~30 ms without input, which decodes whatever is left as keys.
+//! `flushPending` after ~30 ms without input, which decodes whatever is left as keys. A paste
+//! and a reply to the startup query (kitty graphics, cell size, device attributes) are never
+//! keys: they wait for their end however long it takes.
 const std = @import("std");
 
 const Allocator = std.mem.Allocator;
@@ -14,6 +16,9 @@ pub const Key = struct {
     /// Set for keys that aren't characters (Shift-Tab, Shift-Up). A shifted character
     /// arrives as the character itself ('F').
     shift: bool = false,
+    /// Only in reports that carry a modifier parameter (kitty-style and xterm-style ones). A key
+    /// with Super does nothing in the TUI: few terminals report it, and none the same way.
+    super: bool = false,
 
     pub const Code = union(enum) {
         char: u21,
@@ -49,7 +54,7 @@ pub const Key = struct {
 };
 
 pub const Event = union(enum) {
-    key: Key,
+    key: KeyEvent,
     /// Bracketed paste content, verbatim.
     paste: []const u8,
     /// A kitty graphics reply `ESC _G i=<id>;OK ESC \`.
@@ -63,6 +68,13 @@ pub const Event = union(enum) {
     /// `ESC [ 48 ; <rows> ; <cols> ; <h_px> ; <w_px> t`: an in-band resize report (mode 2048).
     resize: Resize,
 
+    pub const KeyEvent = struct {
+        key: Key,
+        /// Other keys came in the same read, counting what a flush would decode at its end.
+        /// A terminal that sends one press as several keys does this (Konsole's Shift-F1 is
+        /// Alt-O `2` `P`), and so does typing faster than the app reads.
+        together: bool = false,
+    };
     pub const KittyReply = struct { id: u32, message: []const u8 };
     pub const CellSize = struct { w: u16, h: u16 };
     pub const Resize = struct { rows: u16, cols: u16, h_px: u16, w_px: u16 };
@@ -87,6 +99,9 @@ pub const Decoder = struct {
     paste_open: bool = false,
     /// `paste` was returned in an event and is freed for reuse at the next feed.
     paste_emitted: bool = false,
+    /// Whether the last feed's bytes hold several keys, for `KeyEvent.together`. Null until
+    /// worked out, at their first key.
+    feed_has_several_keys: ?bool = null,
 
     pub fn init(gpa: Allocator) Decoder {
         return .{ .gpa = gpa };
@@ -100,6 +115,7 @@ pub const Decoder = struct {
 
     /// Adds bytes read from the terminal. Slices in events returned before stop being valid.
     pub fn feed(d: *Decoder, bytes: []const u8) Allocator.Error!void {
+        d.feed_has_several_keys = null;
         if (d.paste_emitted) {
             d.paste.clearRetainingCapacity();
             d.paste_emitted = false;
@@ -136,40 +152,91 @@ pub const Decoder = struct {
         return d.decode(true);
     }
 
-    /// Bytes are waiting that `flushPending` would decode. False inside a paste, which waits
-    /// for its end marker however long it takes.
+    /// Bytes are waiting that `flushPending` would decode. False inside a paste or a reply,
+    /// which wait for their end however long it takes.
     pub fn pending(d: *const Decoder) bool {
-        return !d.in_paste and d.pos < d.buf.items.len;
+        var ahead = d.scan();
+        return ahead.next(true) != null;
+    }
+
+    fn scan(d: *const Decoder) Scan {
+        return .{ .bytes = d.buf.items, .pos = d.pos, .in_paste = d.in_paste };
     }
 
     fn decode(d: *Decoder, force: bool) ?Event {
+        var at = d.scan();
+        const from = at;
+        const found = at.next(force);
+        d.pos = at.pos;
+        d.in_paste = at.in_paste;
+        var event = found orelse return null;
+        switch (event) {
+            .paste => |*content| content.* = d.finishPaste(content.*),
+            .key => |*k| {
+                const several = d.feed_has_several_keys orelse from.severalKeys();
+                d.feed_has_several_keys = several;
+                k.together = several;
+            },
+            else => {},
+        }
+        return event;
+    }
+
+    /// A paste's whole content, from the part of it in `buf` (`tail`) and what earlier feeds
+    /// moved to `paste`.
+    fn finishPaste(d: *Decoder, tail: []const u8) []const u8 {
+        if (!d.paste_open) return tail[0..@min(tail.len, max_paste)];
+        d.paste_open = false;
+        const room = max_paste -| d.paste.items.len;
+        d.paste.appendSliceAssumeCapacity(tail[0..@min(tail.len, room)]);
+        d.paste_emitted = true;
+        return d.paste.items;
+    }
+};
+
+/// Where decoding stands in some bytes: the position, and whether it is inside a paste.
+/// `Decoder.decode` moves one through the buffer; a copy looks ahead without moving it.
+const Scan = struct {
+    bytes: []const u8,
+    pos: usize,
+    in_paste: bool,
+
+    /// The next event, or null when the rest needs more bytes. `force` decodes an unfinished
+    /// sequence as keys, as a flush does. A paste comes with only the part of it in `bytes`.
+    fn next(s: *Scan, force: bool) ?Event {
         while (true) {
-            const rest = d.buf.items[d.pos..];
-            if (d.in_paste) {
+            const rest = s.bytes[s.pos..];
+            if (s.in_paste) {
                 const end = std.mem.find(u8, rest, paste_end) orelse return null;
-                d.in_paste = false;
-                d.pos += end + paste_end.len;
-                if (!d.paste_open) return .{ .paste = rest[0..@min(end, max_paste)] };
-                d.paste_open = false;
-                const room = max_paste -| d.paste.items.len;
-                d.paste.appendSliceAssumeCapacity(rest[0..@min(end, room)]);
-                d.paste_emitted = true;
-                return .{ .paste = d.paste.items };
+                s.in_paste = false;
+                s.pos += end + paste_end.len;
+                return .{ .paste = rest[0..end] };
             }
             if (rest.len == 0) return null;
             switch (parse(rest, force)) {
                 .incomplete => return null,
-                .skip => |n| d.pos += n,
+                .skip => |n| s.pos += n,
                 .paste_start => |n| {
-                    d.pos += n;
-                    d.in_paste = true;
+                    s.pos += n;
+                    s.in_paste = true;
                 },
                 .event => |e| {
-                    d.pos += e.len;
+                    s.pos += e.len;
                     return e.event;
                 },
             }
         }
+    }
+
+    /// Whether more than one key is left, counting what a flush would decode at the end.
+    fn severalKeys(from: Scan) bool {
+        var ahead = from;
+        var keys: usize = 0;
+        while (ahead.next(true)) |e| {
+            if (e == .key) keys += 1;
+            if (keys > 1) return true;
+        }
+        return false;
     }
 };
 
@@ -181,7 +248,7 @@ const Parsed = union(enum) {
     event: struct { len: usize, event: Event },
 
     fn key(len: usize, k: Key) Parsed {
-        return .{ .event = .{ .len = len, .event = .{ .key = k } } };
+        return .{ .event = .{ .len = len, .event = .{ .key = .{ .key = k } } } };
     }
 
     fn code(len: usize, c: Key.Code) Parsed {
@@ -207,7 +274,7 @@ fn withAlt(bytes: []const u8, force: bool) Parsed {
         .incomplete => .incomplete,
         .event => |e| switch (e.event) {
             .key => |k| blk: {
-                var alt = k;
+                var alt = k.key;
                 alt.alt = true;
                 break :blk .key(e.len + 1, alt);
             },
@@ -276,14 +343,17 @@ const Params = struct {
     }
 };
 
-/// xterm modifier parameter: 1 + bits (shift 1, alt 2, ctrl 4, meta 8 counted as alt).
+/// The modifier parameter: 1 + bits (shift 1, alt 2, ctrl 4, super 8). Bit 8 is Super in kitty's
+/// encoding, which Ghostty, kitty, Alacritty and foot use even without the protocol; it is xterm's
+/// Meta, which is rare. Higher bits (hyper, meta, the locks) are dropped.
 fn applyModifiers(k: Key, param: u32) Key {
     var out = k;
     if (param < 2) return out;
     const bits = param - 1;
     if (bits & 1 != 0) out.shift = true;
-    if (bits & (2 | 8) != 0) out.alt = true;
+    if (bits & 2 != 0) out.alt = true;
     if (bits & 4 != 0) out.ctrl = true;
+    if (bits & 8 != 0) out.super = true;
     return out;
 }
 
@@ -302,7 +372,10 @@ fn parseCsi(bytes: []const u8, force: bool) Parsed {
     const params_end = i;
     while (i < bytes.len and bytes[i] >= 0x20 and bytes[i] <= 0x2f) i += 1;
     if (i >= bytes.len) {
-        if (force or bytes.len > max_sequence) return altChar(bytes);
+        if (bytes.len > max_sequence) return altChar(bytes);
+        // A reply split across reads waits for its end, through a flush too: its bytes are
+        // never keys.
+        if (force and !canStillBeCsiReply(marker, bytes[params_start..])) return altChar(bytes);
         return .incomplete;
     }
     const final = bytes[i];
@@ -365,6 +438,22 @@ fn parseCsi(bytes: []const u8, force: bool) Parsed {
     }
 }
 
+/// Whether an unfinished CSI, `rest` after its marker, can still be one of the replies to the
+/// startup query (`graphics.query`) that are CSIs: DA1, or any other with `?`, which no key
+/// has, and the cell size `6 ; <h> ; <w> t`. `ESC [` alone is Alt-[, not one.
+fn canStillBeCsiReply(marker: u8, rest: []const u8) bool {
+    if (marker == '?') return true;
+    if (marker != 0 or rest.len == 0 or rest[0] != '6') return false;
+    if (rest.len > 1 and rest[1] != ';') return false;
+    var params: usize = 1;
+    for (rest[1..]) |c| switch (c) {
+        '0'...'9' => {},
+        ';' => params += 1,
+        else => return false,
+    };
+    return params <= 3;
+}
+
 fn clamp16(v: u32) u16 {
     return @intCast(@min(v, std.math.maxInt(u16)));
 }
@@ -420,9 +509,13 @@ fn parseSs3(bytes: []const u8, force: bool) Parsed {
 fn parseApc(bytes: []const u8, force: bool) Parsed {
     if (bytes.len < 3) return if (force) altChar(bytes) else .incomplete;
     if (bytes[2] != 'G') return altChar(bytes);
-    const st = std.mem.find(u8, bytes[3..], "\x1b\\") orelse {
-        if (force or bytes.len > max_sequence) return altChar(bytes);
-        return .incomplete;
+    const st = switch (kittyReplyEnd(bytes[3..])) {
+        .st => |i| i,
+        // Only one longer than any reply gives up waiting.
+        .open => return if (bytes.len > max_sequence) altChar(bytes) else .incomplete,
+        // Its `ESC \` would still make it a reply, so it waits like any unfinished sequence.
+        .odd => return if (force or bytes.len > max_sequence) altChar(bytes) else .incomplete,
+        .bad => return altChar(bytes),
     };
     const body = bytes[3..][0..st];
     const len = 3 + st + 2;
@@ -436,6 +529,52 @@ fn parseApc(bytes: []const u8, force: bool) Parsed {
     const reply: Event.KittyReply = .{ .id = id, .message = message };
     const event: Event = if (std.mem.eql(u8, message, "OK")) .{ .kitty_graphics_ok = reply } else .{ .kitty_graphics_error = reply };
     return .{ .event = .{ .len = len, .event = event } };
+}
+
+const ReplyEnd = union(enum) {
+    /// Where the closing `ESC \` starts.
+    st: usize,
+    /// No `ESC \` yet, and all of it can be how a reply begins.
+    open,
+    /// No `ESC \` yet, and its control data is like no reply's. Most likely keys, but its
+    /// `ESC \` would still make it a reply.
+    odd,
+    /// It can't be a reply: an ESC in it starts something else.
+    bad,
+};
+
+/// How a kitty graphics reply goes on after `ESC _ G`: control data such as `i=31,p=1`, then
+/// `;` and a message, then `ESC \`, with no other ESC. Once its `ESC \` is here it is a reply,
+/// whatever its control data. Until then, one that looks like a reply waits for its end
+/// through the flush, and one that doesn't waits only for the flush, as any unfinished
+/// sequence does.
+fn kittyReplyEnd(body: []const u8) ReplyEnd {
+    const esc = std.mem.findScalar(u8, body, 0x1b) orelse body.len;
+    if (esc + 1 < body.len) return if (body[esc + 1] == '\\') .{ .st = esc } else .bad;
+    return if (canStartKittyReply(body[0..esc])) .open else .odd;
+}
+
+/// Whether `text` can be how a kitty graphics reply's control data and message begin.
+fn canStartKittyReply(text: []const u8) bool {
+    // Control data is `name=value` pairs, each name one letter; the message after `;` is free.
+    var at: enum { name, equals, value } = .name;
+    for (text) |c| {
+        at = switch (at) {
+            .name => switch (c) {
+                'a'...'z', 'A'...'Z' => .equals,
+                ';' => return true,
+                else => return false,
+            },
+            .equals => if (c == '=') .value else return false,
+            .value => switch (c) {
+                '0'...'9', 'a'...'z', 'A'...'Z', '-' => .value,
+                ',' => .name,
+                ';' => return true,
+                else => return false,
+            },
+        };
+    }
+    return true;
 }
 
 // ---- Tests ----
@@ -462,8 +601,8 @@ fn expectKeys(bytes: []const u8, expected: []const Key) !void {
     }
     for (expected, events.items) |want, got| {
         try testing.expect(got == .key);
-        if (!want.eql(got.key)) {
-            std.debug.print("bytes {x}: want {any}, got {any}\n", .{ bytes, want, got.key });
+        if (!want.eql(got.key.key)) {
+            std.debug.print("bytes {x}: want {any}, got {any}\n", .{ bytes, want, got.key.key });
             return error.TestUnexpectedResult;
         }
     }
@@ -505,8 +644,19 @@ test "modifiers on cursor keys" {
     try expectKeys("\x1b[1;6H", &.{.{ .code = .home, .ctrl = true, .shift = true }});
     try expectKeys("\x1b[1;7F", &.{.{ .code = .end, .ctrl = true, .alt = true }});
     try expectKeys("\x1b[1;8A", &.{.{ .code = .up, .ctrl = true, .alt = true, .shift = true }});
-    try expectKeys("\x1b[1;9A", &.{.{ .code = .up, .alt = true }});
     try expectKeys("\x1b[1;1A", &.{plainKey(.up)});
+}
+
+test "modifier bit 8 is Super, not Alt" {
+    // kitty's protocol, and Ghostty, kitty, Alacritty and foot without it: Super-Up is `CSI 1;9A`.
+    try expectKeys("\x1b[1;9A", &.{.{ .code = .up, .super = true }});
+    try expectKeys("\x1b[97;9u", &.{.{ .code = .{ .char = 'a' }, .super = true }});
+    // Ghostty's Super-Enter, in the modifyOtherKeys form.
+    try expectKeys("\x1b[27;9;13~", &.{.{ .code = .enter, .super = true }});
+    // Super with the others: Alt (2), Ctrl (4), Shift (1).
+    try expectKeys("\x1b[97;11u", &.{.{ .code = .{ .char = 'a' }, .alt = true, .super = true }});
+    try expectKeys("\x1b[3;13~", &.{.{ .code = .delete, .ctrl = true, .super = true }});
+    try expectKeys("\x1b[1;10C", &.{.{ .code = .right, .shift = true, .super = true }});
 }
 
 test "tilde keys" {
@@ -547,6 +697,50 @@ test "alt is an ESC prefix" {
     try expectKeys("\x1b_x", &.{ .{ .code = .{ .char = '_' }, .alt = true }, .char('x') });
 }
 
+test "each key says whether other keys came with it in one read" {
+    var d: Decoder = .init(testing.allocator);
+    defer d.deinit();
+    // Konsole sends Shift-F1 as Alt-O, `2`, `P`: one press, three keys in one read.
+    try d.feed("\x1bO2P");
+    for ([_]Key{ .{ .code = .{ .char = 'O' }, .alt = true }, .char('2'), .char('P') }) |want| {
+        const k = d.next().?.key;
+        try testing.expect(k.key.eql(want));
+        try testing.expect(k.together);
+    }
+    try testing.expectEqual(null, d.next());
+    // Two keys typed faster than the app reads.
+    try d.feed("jk");
+    try testing.expect(d.next().?.key.together);
+    try testing.expect(d.next().?.key.together);
+
+    // One key in a read is alone, a sequence split across reads too.
+    try d.feed("j");
+    try testing.expect(!d.next().?.key.together);
+    try d.feed("\x1b[1;5");
+    try testing.expectEqual(null, d.next());
+    try d.feed("A");
+    const up = d.next().?.key;
+    try testing.expect(up.key.eql(.{ .code = .up, .ctrl = true }));
+    try testing.expect(!up.together);
+
+    // A paste or a reply in the same read isn't a key.
+    try d.feed("\x1b[200~xy\x1b[201~k\x1b_Gi=31;OK\x1b\\");
+    try testing.expectEqualStrings("xy", d.next().?.paste);
+    try testing.expect(!d.next().?.key.together);
+    try testing.expectEqual(31, d.next().?.kitty_graphics_ok.id);
+
+    // A lone ESC is alone after the wait; one that came after a key came with it.
+    try d.feed("\x1b");
+    try testing.expectEqual(null, d.next());
+    const esc = d.flushPending().?.key;
+    try testing.expect(esc.key.eql(plainKey(.esc)));
+    try testing.expect(!esc.together);
+    try d.feed("x\x1b");
+    try testing.expect(d.next().?.key.together);
+    try testing.expectEqual(null, d.next());
+    try testing.expect(d.flushPending().?.key.together);
+}
+
 test "a lone ESC waits for the flush" {
     var d: Decoder = .init(testing.allocator);
     defer d.deinit();
@@ -554,53 +748,34 @@ test "a lone ESC waits for the flush" {
     try testing.expectEqual(null, d.next());
     try testing.expect(d.pending());
     const e = d.flushPending().?;
-    try testing.expect(e.key.eql(plainKey(.esc)));
+    try testing.expect(e.key.key.eql(plainKey(.esc)));
     try testing.expectEqual(null, d.flushPending());
     try testing.expect(!d.pending());
 
     // Two ESCs: Alt-Escape after the flush.
     try d.feed("\x1b\x1b");
     try testing.expectEqual(null, d.next());
-    try testing.expect(d.flushPending().?.key.eql(.{ .code = .esc, .alt = true }));
+    try testing.expect(d.flushPending().?.key.key.eql(.{ .code = .esc, .alt = true }));
 }
 
 test "unfinished sequences flush as keys" {
     try expectKeys("\x1b[", &.{.{ .code = .{ .char = '[' }, .alt = true }});
     try expectKeys("\x1b[1;", &.{ .{ .code = .{ .char = '[' }, .alt = true }, .char('1'), .char(';') });
     try expectKeys("\x1bO", &.{.{ .code = .{ .char = 'O' }, .alt = true }});
-    try expectKeys("\x1b_Gi=1", &.{ .{ .code = .{ .char = '_' }, .alt = true }, .char('G'), .char('i'), .char('='), .char('1') });
+    // Past what a cell-size report can be.
+    try expectKeys("\x1b[61", &.{ .{ .code = .{ .char = '[' }, .alt = true }, .char('6'), .char('1') });
+    try expectKeys("\x1b[6;1;2;", &.{ .{ .code = .{ .char = '[' }, .alt = true }, .char('6'), .char(';'), .char('1'), .char(';'), .char('2'), .char(';') });
     // A malformed CSI (a control before the final byte) is Alt-[ and the rest.
     try expectKeys("\x1b[\r", &.{ .{ .code = .{ .char = '[' }, .alt = true }, plainKey(.enter) });
 }
 
 test "sequences split across feeds" {
     const all = "a\x1b[1;5A\x1bOP\x1b[200~hi\x1b[201~é\x1b_Gi=31;OK\x1b\\\x1b[?62;22c\x1b[6;20;10t\x1b[48;40;120;800;1200t";
+    var want: std.ArrayList(u8) = .empty;
+    defer want.deinit(testing.allocator);
+    try testing.expectEqual(9, try describeRead(all, &want));
     // Every split point gives the same events.
-    var reference: std.ArrayList(Event) = .empty;
-    defer reference.deinit(testing.allocator);
-    var whole: Decoder = .init(testing.allocator);
-    defer whole.deinit();
-    try decodeAll(&whole, all, false, &reference);
-    try testing.expectEqual(9, reference.items.len);
-
-    for (1..all.len) |cut| {
-        var d: Decoder = .init(testing.allocator);
-        defer d.deinit();
-        var got: std.ArrayList(Event) = .empty;
-        defer got.deinit(testing.allocator);
-        // Compare as text: slices from the first feed may not outlive the second.
-        var texts: std.ArrayList(u8) = .empty;
-        defer texts.deinit(testing.allocator);
-        try d.feed(all[0..cut]);
-        while (d.next()) |e| try texts.print(testing.allocator, "{any}|", .{e});
-        try d.feed(all[cut..]);
-        while (d.next()) |e| try texts.print(testing.allocator, "{any}|", .{e});
-        var want: std.ArrayList(u8) = .empty;
-        defer want.deinit(testing.allocator);
-        for (reference.items) |e| try want.print(testing.allocator, "{any}|", .{e});
-        try testing.expectEqualStrings(want.items, texts.items);
-        try testing.expect(!d.pending());
-    }
+    for (1..all.len) |cut| try expectSplitGives(all, cut, false, want.items);
 }
 
 test "every byte fed alone" {
@@ -614,7 +789,7 @@ test "every byte fed alone" {
         while (d.next()) |e| switch (e) {
             .paste => |p| try texts.print(testing.allocator, "paste:{s}|", .{p}),
             .kitty_graphics_error => |r| try texts.print(testing.allocator, "kerr:{d}:{s}|", .{ r.id, r.message }),
-            .key => |key| try texts.print(testing.allocator, "key:{any}|", .{key.code}),
+            .key => |k| try texts.print(testing.allocator, "key:{any}|", .{k.key.code}),
             else => try texts.appendSlice(testing.allocator, "other|"),
         };
     }
@@ -628,9 +803,9 @@ test "bracketed paste" {
     var d: Decoder = .init(testing.allocator);
     defer d.deinit();
     try d.feed("a\x1b[200~hello\r\nwörld\x1b[201~b");
-    try testing.expect(d.next().?.key.eql(.char('a')));
+    try testing.expect(d.next().?.key.key.eql(.char('a')));
     try testing.expectEqualStrings("hello\r\nwörld", d.next().?.paste);
-    try testing.expect(d.next().?.key.eql(.char('b')));
+    try testing.expect(d.next().?.key.key.eql(.char('b')));
     try testing.expectEqual(null, d.next());
 
     // Keys inside a paste are text; a paste waits for its end even through a flush.
@@ -646,7 +821,7 @@ test "bracketed paste" {
     // Empty paste; a stray end marker is ignored.
     try d.feed("\x1b[200~\x1b[201~\x1b[201~z");
     try testing.expectEqualStrings("", d.next().?.paste);
-    try testing.expect(d.next().?.key.eql(.char('z')));
+    try testing.expect(d.next().?.key.key.eql(.char('z')));
 }
 
 test "two pastes in one feed keep their slices" {
@@ -694,6 +869,84 @@ test "kitty graphics replies" {
     try testing.expectEqualStrings("ENOENT:image not found", err.message);
     try testing.expectEqual(0, d.next().?.kitty_graphics_ok.id);
     try testing.expectEqual(null, d.next());
+
+    // Whole, it is a reply whatever its control data: only an unfinished one must look like one
+    // to wait through the flush. Split across reads with no wait between them, it is one too.
+    const odd = "\x1b_Gi=31,x.y z;OK\x1b\\";
+    try d.feed(odd);
+    try testing.expectEqual(31, d.next().?.kitty_graphics_ok.id);
+    try testing.expectEqual(null, d.next());
+    var want: std.ArrayList(u8) = .empty;
+    defer want.deinit(testing.allocator);
+    try testing.expectEqual(1, try describeRead(odd, &want));
+    for (1..odd.len) |cut| try expectSplitGives(odd, cut, false, want.items);
+}
+
+test "the answer to the startup query split across reads stays together through the wait" {
+    // What a terminal answers to `graphics.query`: the kitty graphics reply (OK or an error),
+    // the cell size, then DA1.
+    const answers = [_][]const []const u8{
+        &.{ "\x1b_Gi=31;OK\x1b\\", "\x1b[6;20;10t", "\x1b[?62;22c" },
+        &.{ "\x1b_Gi=31,p=1;ENOENT:image not found\x1b\\", "\x1b[6;20;10t", "\x1b[?62;22c" },
+    };
+    for (answers) |replies| {
+        const all = try std.mem.concat(testing.allocator, u8, replies);
+        defer testing.allocator.free(all);
+        var want: std.ArrayList(u8) = .empty;
+        defer want.deinit(testing.allocator);
+        try testing.expectEqual(3, try describeRead(all, &want));
+        // From the third byte of each reply on (`ESC _ G`, `ESC [ 6`, `ESC [ ?`), its bytes
+        // are a reply's: the rest may come long after the 30 ms the app waits, and they still
+        // give the same replies and no keys.
+        var start: usize = 0;
+        for (replies) |reply| {
+            for (3..reply.len) |at| try expectSplitGives(all, start + at, true, want.items);
+            start += reply.len;
+        }
+    }
+    // `ESC`, `ESC _` and `ESC [` alone are keys someone can press (Esc, Alt-_, Alt-[): they
+    // still wait only the 30 ms, as "a lone ESC waits for the flush" and "unfinished sequences
+    // flush as keys" show.
+    try expectKeys("\x1b_", &.{.{ .code = .{ .char = '_' }, .alt = true }});
+}
+
+test "after ESC _ G, what can't be a graphics reply is keys" {
+    // At the flush, as any unfinished sequence, when its control data is like no reply's: its
+    // `ESC \` could still come...
+    for ([_][]const u8{ "\x1b_Gi=1\r", "\x1b_Gab" }) |bytes| {
+        var d: Decoder = .init(testing.allocator);
+        defer d.deinit();
+        try d.feed(bytes);
+        try testing.expectEqual(null, d.next());
+        try testing.expect(d.pending());
+        try testing.expect(d.flushPending().?.key.key.eql(.{ .code = .{ .char = '_' }, .alt = true }));
+    }
+
+    // ...and at once after an ESC that doesn't close it, which starts something else.
+    var at_once: Decoder = .init(testing.allocator);
+    defer at_once.deinit();
+    try at_once.feed("\x1b_Gi=1\x1bx");
+    for ([_]Key{ .{ .code = .{ .char = '_' }, .alt = true }, .char('G'), .char('i'), .char('='), .char('1'), .{ .code = .{ .char = 'x' }, .alt = true } }) |want| {
+        try testing.expect(at_once.next().?.key.key.eql(want));
+    }
+    try testing.expectEqual(null, at_once.next());
+    // A reply right after such keys is still a reply: it doesn't end theirs.
+    var d: Decoder = .init(testing.allocator);
+    defer d.deinit();
+    try d.feed("\x1b_Gab\x1b_Gi=31;OK\x1b\\");
+    for ([_]Key{ .{ .code = .{ .char = '_' }, .alt = true }, .char('G'), .char('a'), .char('b') }) |want| {
+        try testing.expect(d.next().?.key.key.eql(want));
+    }
+    try testing.expectEqual(31, d.next().?.kitty_graphics_ok.id);
+    try testing.expectEqual(null, d.next());
+
+    // ...or one past the longest reply we wait for.
+    var long: Decoder = .init(testing.allocator);
+    defer long.deinit();
+    try long.feed("\x1b_Gi=");
+    const digits: [max_sequence]u8 = @splat('1');
+    try long.feed(&digits);
+    try testing.expect(long.next().?.key.key.eql(.{ .code = .{ .char = '_' }, .alt = true }));
 }
 
 test "device attributes, cell size and resize reports" {
@@ -710,7 +963,7 @@ test "device attributes, cell size and resize reports" {
     try testing.expectEqual(800, r.h_px);
     try testing.expectEqual(1200, r.w_px);
     // Other replies (text area size, DECRPM, focus) are skipped.
-    try testing.expect(d.next().?.key.eql(.char('x')));
+    try testing.expect(d.next().?.key.key.eql(.char('x')));
     try testing.expectEqual(null, d.next());
 }
 
@@ -735,8 +988,16 @@ test "an endless sequence gives up" {
     const digits: [max_sequence]u8 = @splat('1');
     try d.feed(&digits);
     // Alt-[ first, then the digits as keys.
-    try testing.expect(d.next().?.key.eql(.{ .code = .{ .char = '[' }, .alt = true }));
-    try testing.expect(d.next().?.key.eql(.char('1')));
+    try testing.expect(d.next().?.key.key.eql(.{ .code = .{ .char = '[' }, .alt = true }));
+    try testing.expect(d.next().?.key.key.eql(.char('1')));
+
+    // A reply that waits through the flush gives up too.
+    var reply: Decoder = .init(testing.allocator);
+    defer reply.deinit();
+    try reply.feed("\x1b[?");
+    try reply.feed(&digits);
+    try testing.expect(reply.next().?.key.key.eql(.{ .code = .{ .char = '[' }, .alt = true }));
+    try testing.expect(reply.next().?.key.key.eql(.char('?')));
 }
 
 test "a paste after one that spanned feeds starts empty" {
@@ -752,12 +1013,46 @@ test "a paste after one that spanned feeds starts empty" {
     try testing.expectEqual(null, d.next());
 }
 
+/// Writes the events one read of `bytes` gives, as `describe` does, and returns how many.
+fn describeRead(bytes: []const u8, out: *std.ArrayList(u8)) !usize {
+    var d: Decoder = .init(testing.allocator);
+    defer d.deinit();
+    try d.feed(bytes);
+    var n: usize = 0;
+    while (d.next()) |e| : (n += 1) try describe(out, e);
+    return n;
+}
+
+/// Feeds `bytes` as two reads cut at `cut` and checks they give `want` (as `describe` writes
+/// it), with nothing left waiting. With `wait`, the app's 30 ms wait runs out between the two
+/// reads, and must find nothing to flush.
+fn expectSplitGives(bytes: []const u8, cut: usize, wait: bool, want: []const u8) !void {
+    var d: Decoder = .init(testing.allocator);
+    defer d.deinit();
+    // Compare as text: slices from the first feed may not outlive the second.
+    var got: std.ArrayList(u8) = .empty;
+    defer got.deinit(testing.allocator);
+    try d.feed(bytes[0..cut]);
+    while (d.next()) |e| try describe(&got, e);
+    if (wait) {
+        try testing.expect(!d.pending());
+        while (d.flushPending()) |e| try describe(&got, e);
+    }
+    try d.feed(bytes[cut..]);
+    while (d.next()) |e| try describe(&got, e);
+    if (!std.mem.eql(u8, want, got.items)) std.debug.print("split at {d} of {x}\n", .{ cut, bytes });
+    try testing.expectEqualStrings(want, got.items);
+    try testing.expect(!d.pending());
+}
+
 /// An event as text that outlives the decoder's buffers.
 fn describe(out: *std.ArrayList(u8), e: Event) !void {
     switch (e) {
         .paste => |p| try out.print(testing.allocator, "paste:{s}|", .{p}),
         .device_attributes => |p| try out.print(testing.allocator, "da:{s}|", .{p}),
         .kitty_graphics_ok, .kitty_graphics_error => |r| try out.print(testing.allocator, "kitty:{t}:{d}:{s}|", .{ e, r.id, r.message }),
+        // Without the together mark, which depends on how the bytes were split into reads.
+        .key => |k| try out.print(testing.allocator, "key:{any}|", .{k.key}),
         else => try out.print(testing.allocator, "{any}|", .{e}),
     }
 }

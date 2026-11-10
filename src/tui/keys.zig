@@ -358,7 +358,7 @@ pub fn fixed(key: Key) ?Fixed {
 /// typing, so every character can be typed in search.
 pub fn typed(key: Key) ?u21 {
     const k = fold(key);
-    if (k.ctrl or k.alt) return null;
+    if (k.ctrl or k.alt or k.super) return null;
     return switch (k.code) {
         .char => |c| if (c >= 0x20 and c != 0x7f) c else null,
         else => null,
@@ -676,6 +676,15 @@ test "^c quits and ^z suspends, outside the bindings" {
     try testing.expect(fixed(.{ .code = .{ .char = 'c' }, .ctrl = true, .alt = true }) == null);
     try testing.expect(fixed(.char('c')) == null);
     try testing.expect(fixed(.char('q')) == null);
+}
+
+test "a key with Ctrl, Alt or Super types nothing; a shifted character types itself" {
+    try testing.expectEqual('a', typed(.char('a')).?);
+    try testing.expectEqual('A', typed(.{ .code = .{ .char = 'a' }, .shift = true }).?);
+    try testing.expect(typed(.{ .code = .{ .char = 'a' }, .alt = true }) == null);
+    try testing.expect(typed(.ctrlChar('a')) == null);
+    try testing.expect(typed(.{ .code = .{ .char = 'a' }, .super = true }) == null);
+    try testing.expect(typed(.{ .code = .{ .char = 'A' }, .shift = true, .super = true }) == null);
 }
 
 test "action names are fixed: none is renamed, removed or repointed, and every action is pinned" {
