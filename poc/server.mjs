@@ -1,6 +1,8 @@
 // Local server for the engine page, and the only channel between the CLI and the browser:
-// commands go to the page over Server-Sent Events, state and results come back as POSTs.
-// No browser automation protocol is involved, so any browser that runs the page works.
+// commands go to the page over Server-Sent Events, state comes back over a WebSocket and
+// results as POSTs. No browser automation protocol is involved, so any browser that runs the
+// page works.
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
@@ -35,11 +37,68 @@ export async function startServer() {
     p[fn](value)
   }
 
+  // Refuse DNS-rebinding requests: only loopback host names may talk to the engine.
+  const hostAllowed = (req) => /^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(req.headers.host ?? '')
+
+  // A report from the current page; one from another launch's is stale.
+  function takeReport(report) {
+    if (report?.engine !== session) return false
+    lastReport = report
+    lastReportAt = Date.now()
+    for (const fn of listeners.report) fn(lastReport)
+    return true
+  }
+
+  // The page's report socket (`/reports?engine=<nonce>`): each message is a report. A minimal
+  // WebSocket: masked frames from the page, fragments and pings answered, nothing sent otherwise.
+  function upgrade(req, socket) {
+    const url = new URL(req.url, 'http://x')
+    const key = req.headers['sec-websocket-key']
+    const refuse = (status) => socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`)
+    if (!hostAllowed(req)) return refuse('403 Forbidden')
+    if (url.pathname !== '/reports' || !key) return refuse('404 Not Found')
+    if (!session || url.searchParams.get('engine') !== session) return refuse('409 Conflict')
+    const accept = createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64')
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
+    const frame = (opcode, payload) => socket.write(Buffer.concat([Buffer.from([0x80 | opcode, payload.length]), payload]))
+    let input = Buffer.alloc(0)
+    let fragments = []
+    socket.on('error', () => {})
+    socket.on('data', (chunk) => {
+      input = Buffer.concat([input, chunk])
+      while (input.length >= 2) {
+        let len = input[1] & 0x7f
+        let at = 2
+        if (len === 126) [len, at] = input.length < 4 ? [Infinity, 4] : [input.readUInt16BE(2), 4]
+        else if (len === 127) [len, at] = input.length < 10 ? [Infinity, 10] : [Number(input.readBigUInt64BE(2)), 10]
+        if (input.length < at + 4 + len) return
+        const mask = input.subarray(at, at + 4)
+        const payload = input.subarray(at + 4, at + 4 + len).map((b, i) => b ^ mask[i % 4])
+        const [fin, opcode] = [input[0] & 0x80, input[0] & 0x0f]
+        input = input.subarray(at + 4 + len)
+        if (opcode === 0x8) return frame(0x8, payload.subarray(0, 2)), socket.end()
+        if (opcode === 0x9) frame(0xa, payload)
+        if (opcode > 0x2) continue
+        fragments.push(payload)
+        if (!fin) continue
+        const text = Buffer.concat(fragments).toString()
+        fragments = []
+        let report
+        try {
+          report = JSON.parse(text)
+        } catch {
+          continue
+        }
+        // The launch is over: so is its socket.
+        if (!takeReport(report)) return frame(0x8, Buffer.from([0x03, 0xf0])), socket.end()
+      }
+    })
+  }
+
   async function handle(req, res) {
     const path = new URL(req.url, 'http://x').pathname
     const headers = { 'Cache-Control': 'no-store' }
-    // Refuse DNS-rebinding requests: only loopback host names may talk to the engine.
-    if (!/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(req.headers.host ?? '')) return res.writeHead(403, headers).end()
+    if (!hostAllowed(req)) return res.writeHead(403, headers).end()
 
     const fromSession = new URL(req.url, 'http://x').searchParams.get('engine')
     if (path === '/claim') {
@@ -58,14 +117,6 @@ export async function startServer() {
         if (!streams.size) for (const id of [...pending.keys()]) settle(id, 'reject', new Error('engine page disconnected'))
       })
       return
-    }
-    if (path === '/report' && req.method === 'POST') {
-      const report = await readJson(req)
-      if (report.engine !== session) return res.writeHead(409, headers).end()
-      lastReport = report
-      lastReportAt = Date.now()
-      for (const fn of listeners.report) fn(lastReport)
-      return res.writeHead(204, headers).end()
     }
     if (path === '/result' && req.method === 'POST') {
       const { id, ok, value, error } = await readJson(req)
@@ -100,6 +151,7 @@ export async function startServer() {
   const servers = []
   for (const host of ['127.0.0.1', '::1']) {
     const server = createServer((req, res) => handle(req, res).catch((err) => res.writeHead(500).end(String(err))))
+    server.on('upgrade', upgrade)
     try {
       await new Promise((resolve, reject) => server.once('error', reject).listen(PORT, host, resolve))
       servers.push(server)

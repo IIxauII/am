@@ -23,7 +23,7 @@ node poc/am.mjs ──┬─ REST (search, token checks) ───────�
                   │
                   └─ localhost:47823 (poc/server.mjs) ◀──▶ engine page (poc/web/) in a hidden browser
                        SSE /events  → commands (play, pause, drmProbe…)
-                       POST /report ← state once a second + on events
+                       WS /reports  ← state once a second + on events, one socket per page load
                        GET /user-token → Music User Token injected into MusicKit
 ```
 
