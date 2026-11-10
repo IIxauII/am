@@ -638,6 +638,8 @@ pub const App = struct {
     }
 
     fn onKey(app: *App, k: input.Key) void {
+        // Few terminals report Super, and none the same way, so no key with it does anything.
+        if (k.super) return;
         app.dirty = true;
         const now = app.nowMs();
         if (k.ctrl and k.code == .char and k.code.char == 'z') {
@@ -1836,7 +1838,7 @@ fn drainInput(app: *App, dec: *input.Decoder, flush: bool) Io.Cancelable!void {
     while (true) {
         const ev = (if (flush) dec.flushPending() else dec.next()) orelse return;
         const out: ?Event = switch (ev) {
-            .key => |k| .{ .key = k },
+            .key => |k| .{ .key = k.key },
             .paste => |p| if (app.gpa.dupe(u8, p)) |owned| Event{ .paste = owned } else |_| null,
             .kitty_graphics_ok => |r| .{ .kitty = .{ .id = r.id, .ok = true } },
             .kitty_graphics_error => |r| .{ .kitty = .{ .id = r.id, .ok = false } },
@@ -2512,6 +2514,30 @@ test "a full pool: a load stops its spinner, f puts the heart back, Enter rememb
     try testing.expectEqual(@as(u32, 0), app.queue_inflight);
     try testing.expectEqualStrings(busy_text, app.toast_text.get());
     try testing.expectEqual(.err, app.toast_kind);
+}
+
+test "a key with Super runs nothing, on the sign-in screen and in the session" {
+    var t: TestApp = undefined;
+    try t.init();
+    defer t.deinit();
+    const app = t.app;
+    // The sign-in screen: Super+q doesn't quit, Super+^c neither.
+    app.handle(.{ .key = .{ .code = .{ .char = 'q' }, .super = true } });
+    app.handle(.{ .key = .{ .code = .{ .char = 'c' }, .ctrl = true, .super = true } });
+    try testing.expectEqual(null, app.quit);
+
+    t.signIn();
+    const v = try t.songs(&.{ librarySong("i.1"), librarySong("i.2"), librarySong("i.3") });
+    app.handle(.{ .key = .{ .code = .{ .char = 'j' }, .super = true } });
+    app.handle(.{ .key = .{ .code = .down, .super = true } });
+    try testing.expectEqual(0, v.list.selected);
+    app.handle(.{ .key = .{ .code = .{ .char = 'q' }, .super = true } });
+    try testing.expectEqual(null, app.quit);
+    // Without Super, the same keys work.
+    app.handle(.{ .key = .char('j') });
+    try testing.expectEqual(1, v.list.selected);
+    app.handle(.{ .key = .char('q') });
+    try testing.expectEqual(false, app.quit);
 }
 
 test "Enter with room in the pool: the queue goes out and is remembered; destroy frees what never ran" {
