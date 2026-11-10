@@ -40,7 +40,7 @@ pub fn control(host: Host, r: *Reply, action: Action) Reply.Error!void {
     // A resume looks at, and calls, the new page load, not a reload's gap. It never repairs. A
     // launch since its wait (a relaunch) leaves its look or its call no page: it then waits for
     // that launch's page and starts over on it, once.
-    var retried = false;
+    var cp: ?play.ControlPlay = if (resuming) |*p| .{ .play = p, .waited_on = engine.pid } else null;
     while (true) {
         if (resuming) |*p| {
             try host.page.waitOutInFlight(r, p);
@@ -50,12 +50,7 @@ pub fn control(host: Host, r: *Reply, action: Action) Reply.Error!void {
         if (action == .pause and try host.page.reloadInFlight(a)) return replyDuringReload(r, action, cancelForReload(host, host.plays.beginStop()));
         // Straight from the page: the last report can be a second old, from before a `stop`.
         const before = try snapshot(host, r) orelse {
-            if (resuming) |*p| {
-                if (!retried and try play.launchedSince(host, a, p, engine.pid, null)) {
-                    retried = true;
-                    continue;
-                }
-            }
+            if (cp) |*c| if (try c.again(host, a, null)) continue;
             return r.fail("nothing to {t}: the engine page didn't answer", .{action});
         };
         // MusicKit drops stopped live radio; the page's resume queues the station again.
@@ -73,12 +68,7 @@ pub fn control(host: Host, r: *Reply, action: Action) Reply.Error!void {
         const timeout: Io.Duration = .fromSeconds(10);
         const result = host.call(a, @tagName(action), args, timeout) catch |e| switch (e) {
             error.NoEnginePage, error.Disconnected => {
-                if (resuming) |*p| {
-                    if (!retried and try play.launchedSince(host, a, p, engine.pid, e)) {
-                        retried = true;
-                        continue;
-                    }
-                }
+                if (cp) |*c| if (try c.again(host, a, e)) continue;
                 return play.failPageCall(r, e, @tagName(action), timeout);
             },
             else => return play.failPageCall(r, e, @tagName(action), timeout),
@@ -679,7 +669,7 @@ test "resume during a launch in flight waits for its page before it looks, never
         try testing.expect(rig.fp.calledOn("1", "snapshot"));
         try testing.expect((try starting.await(testing.io)).ready);
         try testing.expectEqual(@as(u32, 0), rig.fp.reloads + rig.fp.checks + rig.fp.probes);
-        try testing.expectEqual(@as(u32, 1), rig.launcher.launches);
+        try testing.expectEqual(@as(u32, 1), rig.launcher.launchCount());
     }
 }
 
@@ -706,7 +696,7 @@ test "resume whose look or call finds the engine relaunched since its wait waits
         try testing.expectEqualStrings(starting_line ++ "\n", printed.out);
         try testing.expectEqualStrings("error: nothing to resume: " ++ nothing_loaded ++ "\n", printed.err);
         try testing.expect(rig.fp.calledOn("2", "snapshot"));
-        try testing.expectEqual(@as(u32, 2), rig.launcher.launches);
+        try testing.expectEqual(@as(u32, 2), rig.launcher.launchCount());
     }
 }
 

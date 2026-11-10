@@ -320,6 +320,7 @@ pub const Plays = struct {
         /// it is gone. The play counts as unsent again until its next `send`, so a stop that
         /// can't reach the page cancels it.
         pub fn unsend(p: *Play) void {
+            if (!p.open) return;
             const ps = p.plays;
             ps.acquire();
             defer ps.release();

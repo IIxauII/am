@@ -17,7 +17,9 @@
 //! without repairing anything, so its page call lands on the new page load. It also waits for a
 //! launch in flight, so its page call lands once the launch's page is ready. A launch is in
 //! flight from its launch call until its page is ready, its launch wait runs out, it ends, or a
-//! reload of its page is recorded. A play that launches waits for the page in `start` instead.
+//! reload of its page is recorded. A launch after that wait (a relaunch) leaves its page call no
+//! page: the play then waits for that launch and tries once more. Callers that launch the engine
+//! (a play, doctor, keep-engine) wait for its page in `start` instead.
 //!
 //! A decision is acted on, and a verdict returned, only while no reload, launch or sign-in has
 //! come since its inputs were read, and the reloads of doctor and the sign-in only while no play
@@ -261,7 +263,7 @@ pub const Page = struct {
     /// Call it after reading the engine's state (`Host.state`). A launch shows on the channel
     /// only once its launch call has set its nonce, and the state waits out a launch call that
     /// holds the engine before that. A launch that comes after it returns (a relaunch) leaves
-    /// the page call no page: `play.launchedSince` tells, and the play waits again and retries.
+    /// the page call no page: `play.ControlPlay` waits again and retries then.
     pub fn waitOutInFlight(pg: Page, r: *Reply, play: ?*const Plays.Play) Reply.Error!void {
         return pg.vtable.waitOutInFlight(pg.ptr, r, play);
     }
@@ -2248,7 +2250,7 @@ test "a control play during a launch in flight waits for its page to be ready, m
         try testing.expectEqual(playback.Music.starting, rig.fp.held());
         // No repair, and no launch of its own.
         try testing.expectEqual(@as(u32, 0), rig.fp.reloads + rig.fp.checks + rig.fp.probes);
-        try testing.expectEqual(@as(u32, 1), rig.launcher.launches);
+        try testing.expectEqual(@as(u32, 1), rig.launcher.launchCount());
     };
 }
 
@@ -2285,7 +2287,7 @@ test "a control play during the launch call itself, before its caller has record
         try testing.expectEqualStrings(starting_line ++ "\n", try control.out());
         try testing.expect(rig.fp.calledOn("1", "playNext"));
         try testing.expectEqual(playback.Music.starting, rig.fp.held());
-        try testing.expectEqual(@as(u32, 1), rig.launcher.launches);
+        try testing.expectEqual(@as(u32, 1), rig.launcher.launchCount());
     }
 }
 

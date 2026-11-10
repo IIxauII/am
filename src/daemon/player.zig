@@ -336,29 +336,21 @@ pub fn control(host: Host, r: *Reply, req: ControlRequest) Reply.Error!void {
     };
     // A play makes its page call once a launch's page is ready, and on a reload's new page
     // load, not in its gap, where it would fail as not running and play-next or play-later
-    // would drop their songs. It never repairs. The state is read first, as for `am resume`: it
-    // waits out a launch call that hasn't set the launch's nonce yet, so the wait sees the
-    // launch, and names the engine the play waits on.
-    var waited_on: ?platform.ProcessId = null;
-    if (p) |*x| {
-        if ((try host.state(a)).engine) |e| waited_on = e.pid;
-        try host.page.waitOutInFlight(r, x);
-        if (!x.send()) return sendState(host, r, try freshSnapshot(host, a));
-    }
-    var called = try callEnginePage(host, r, req.action.method(), args, timeout);
-    // A launch since the wait (a relaunch) leaves the call no page: the play waits for that
-    // launch's page and calls once more.
-    if (p) |*x| switch (called) {
-        .answer => {},
-        .no_page => |e| if (try play.launchedSince(host, a, x, waited_on, e)) {
-            try host.page.waitOutInFlight(r, x);
-            if (!x.send()) return sendState(host, r, try freshSnapshot(host, a));
-            called = try callEnginePage(host, r, req.action.method(), args, timeout);
-        },
-    };
-    const result = switch (called) {
-        .answer => |json| json,
-        .no_page => return r.fail(not_running, .{}),
+    // would drop their songs. It never repairs. A launch since its wait (a relaunch) leaves the
+    // call no page: the play waits for that launch's page and calls once more.
+    var cp: ?play.ControlPlay = if (p) |*x| try play.ControlPlay.begin(host, a, x) else null;
+    const result = while (true) {
+        if (cp) |c| {
+            try host.page.waitOutInFlight(r, c.play);
+            if (!c.play.send()) return sendState(host, r, try freshSnapshot(host, a));
+        }
+        switch (try callEnginePage(host, r, req.action.method(), args, timeout)) {
+            .answer => |json| break json,
+            .no_page => |e| {
+                if (cp) |*c| if (try c.again(host, a, e)) continue;
+                return r.fail(not_running, .{});
+            },
+        }
     };
     if (p) |*x| x.end();
     // Methods answer with a fresh snapshot; anything else leaves the last report.
@@ -938,7 +930,7 @@ fn expectLandedOn(rig: *fake.Rig, wire: Wire, load: []const u8, launches: u32, m
         try testing.expectEqual(playback.Music.starting, rig.fp.held());
     }
     try testing.expectEqual(@as(u32, 0), rig.fp.reloads + rig.fp.checks + rig.fp.probes);
-    try testing.expectEqual(launches, rig.launcher.launches);
+    try testing.expectEqual(launches, rig.launcher.launchCount());
 }
 
 test "Space, play-next and play-later during a launch in flight wait for its page, then make their page call instead of failing as not configured" {
@@ -1023,7 +1015,7 @@ test "Space with no engine has no launch to wait for: it fails at once as engine
     const wire = try runControlAs(&ph, rig.caller(), "{\"action\":\"toggle\"}");
     try testing.expectEqualStrings("", wire.out);
     try testing.expectEqualStrings(not_running, wire.message.?);
-    try testing.expectEqual(@as(u32, 0), rig.launcher.launches);
+    try testing.expectEqual(@as(u32, 0), rig.launcher.launchCount());
 }
 
 const drop = fake.drop;
