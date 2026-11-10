@@ -921,10 +921,11 @@ test "Space, play-next and play-later during a launch in flight wait for its pag
         try testing.expectEqual(@as(u32, 0), rig.fp.reloads + rig.fp.checks + rig.fp.probes);
         try testing.expectEqual(@as(u32, 1), rig.launcher.launches);
     };
+}
 
-    // With no engine there is no launch to wait for: Space fails at once, for the TUI to queue.
+test "Space with no engine has no launch to wait for: it fails at once as engine-not-running, for the TUI to queue its music" {
     var rig: fake.Rig = undefined;
-    rig.init(timing);
+    rig.init(fake.Rig.timing);
     defer rig.deinit();
     var ph: fake.PageHost = .{ .rig = &rig };
     const wire = try runControlAs(&ph, rig.caller(), "{\"action\":\"toggle\"}");

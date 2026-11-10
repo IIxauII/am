@@ -16,8 +16,9 @@
 //! decides again on it. A control play (Space, `am resume`, play-next, play-later) joins one
 //! without repairing anything, so its page call lands on the new page load. It waits for a
 //! launch in flight the same way, so its page call lands once the launch's page is ready: a
-//! launch is in flight from its first record until then, its launch wait runs out, or it ends.
-//! The callers that launch wait for the page in `start` themselves. A decision is acted
+//! launch is in flight from its launch call until then, its launch wait runs out, it ends, or
+//! a reload of its page is recorded. The callers that launch wait for the page in `start`
+//! themselves. A decision is acted
 //! on, and a verdict returned, only while no reload, launch or sign-in has come since its inputs
 //! were read, and the reloads of doctor and the sign-in only while no play began since they read
 //! `Plays`. That check and the reload's record are one short critical section, so two callers
@@ -250,11 +251,11 @@ pub const Page = struct {
         return pg.vtable.reloadInFlight(pg.ptr, arena);
     }
 
-    /// Joins the launch in flight and the reload in flight, if any, without repairing: a
-    /// control play (Space, `am resume`, play-next, play-later) makes its page call once the
-    /// launch's page is ready, and on a reload's new page load, not in its gap. Never launches
-    /// and never sends a reload. Prints the line for waiting on each (once). Returns once
-    /// neither is in flight, or once a stop cancelled `play`.
+    /// Waits for the launch in flight and joins the reload in flight, if any, without
+    /// repairing: a control play (Space, `am resume`, play-next, play-later) makes its page call
+    /// once the launch's page is ready, and on a reload's new page load, not in its gap. Never
+    /// launches and never sends a reload. Prints the line for waiting on each (once). Returns
+    /// once neither is in flight, or once a stop cancelled `play`.
     pub fn joinInFlight(pg: Page, r: *Reply, play: ?*const Plays.Play) Reply.Error!void {
         return pg.vtable.joinInFlight(pg.ptr, r, play);
     }
@@ -303,9 +304,9 @@ pub const EnginePage = struct {
     plays: *Plays,
     port: Port,
     timing: Timing,
-    /// Guards the reloads below. Held only for loads and stores, never across a channel call, a
-    /// port call, a print or a wait, so a stop or a shutdown never waits on it. It is taken
-    /// before the `Plays` lock, never after.
+    /// Guards the reloads and the launch in flight below. Held only for loads and stores, never
+    /// across a channel call, a port call, a print or a wait, so a stop or a shutdown never
+    /// waits on it. It is taken before the `Plays` lock, never after.
     mutex: Io.Mutex = .init,
     /// The newest launch the module has seen. A decision about an older one is stale.
     launch: u64 = 0,
@@ -321,11 +322,13 @@ pub const EnginePage = struct {
     /// that started it, its launch call or its reload's record. A page load whose report names
     /// no Music User Token is behind while `user_token` is past it.
     load_stamp: u64 = 0,
-    /// The launch in flight: the newest launch, from its first record until its page is ready,
-    /// its launch wait runs out, or it ends. A newer launch takes its place.
-    launching: ?Launching = null,
-    /// The newest launch that has been in flight: each launch is, once, from its first record.
-    armed: u64 = 0,
+    /// The launch in flight, as `start` recorded it: the newest launch, until its page is ready,
+    /// its launch wait runs out, it ends, or a reload of its page is recorded.
+    launch_in_flight: ?LaunchInFlight = null,
+    /// The newest launch `start` has recorded as in flight. Each launch is in flight once: a
+    /// later `start` on the same engine doesn't put it back. A newer launch on the channel is
+    /// one whose launch call hasn't returned yet.
+    recorded_launch: u64 = 0,
 
     pub fn init(io: Io, channel: *Channel, plays: *Plays, port: Port, timing: Timing) EnginePage {
         return .{ .io = io, .channel = channel, .plays = plays, .port = port, .timing = timing };
@@ -393,12 +396,11 @@ pub const EnginePage = struct {
         const deadline: Deadline = .since(p.io, launch.at, p.timing.launch_wait);
         var seen = try p.channel.waitChange(null, .zero);
         while (true) {
-            if (try p.channel.lastReport(arena)) |last| if (p.channel.connected()) if (playback.parseReport(arena, last.json)) |report|
-                if (report.configureDone()) {
-                    // A reload may follow at once: a control play then joins that, not the launch.
-                    p.landLaunch(launch.generation);
-                    return started(launch, true, report);
-                };
+            if (try p.readyReport(arena)) |report| {
+                // A reload may follow at once: a control play then joins that, not the launch.
+                p.landLaunch(launch.generation);
+                return started(launch, true, report);
+            }
             // Every engine stop moves the channel's launch, and the supervisor stops an engine
             // that exited within a tick.
             if (p.channel.currentLaunch() != launch.generation) {
@@ -418,6 +420,15 @@ pub const EnginePage = struct {
 
     fn started(launch: Launch, ready: bool, report: Report) Started {
         return .{ .kind = launch.kind, .pid = launch.pid, .started = launch.launched, .headless = launch.headless, .ready = ready, .report = report };
+    }
+
+    /// The page's latest report once the page is ready: connected, with MusicKit configured or
+    /// failed to, in a report am can read. Null until then.
+    fn readyReport(p: *EnginePage, arena: Allocator) Allocator.Error!?Report {
+        const last = try p.channel.lastReport(arena) orelse return null;
+        if (!p.channel.connected()) return null;
+        const report = playback.parseReport(arena, last.json) orelse return null;
+        return if (report.configureDone()) report else null;
     }
 
     /// The page's latest report, or an empty one when it sent none or one am can't read.
@@ -452,14 +463,16 @@ pub const EnginePage = struct {
         while (try p.join(r, &said, play)) |waited| if (waited == .cancelled) return;
     }
 
-    /// Joins the launch in flight, then the reload in flight, and any that follows them,
-    /// without deciding anything: it returns once neither is in flight, or once a stop
-    /// cancelled `play`. Says so once for each.
+    /// Waits for the launch in flight, then joins the reload in flight, and any launch or
+    /// reload that follows them, without deciding anything: it returns once neither is in
+    /// flight, or once a stop cancelled `play`. Says so once for each.
     pub fn joinInFlight(p: *EnginePage, r: *Reply, play: ?*const Plays.Play) Reply.Error!void {
         var said_launch = false;
         var said_reload = false;
+        // The launches this call has waited out: it waits for each at most once.
+        var waited_out: u64 = 0;
         while (true) {
-            if (try p.joinLaunch(r, &said_launch, play)) |waited| {
+            if (try p.waitForLaunch(r, &said_launch, &waited_out, play)) |waited| {
                 if (waited == .cancelled) return;
                 continue;
             }
@@ -833,27 +846,34 @@ pub const EnginePage = struct {
         p.mutex.lockUncancelable(p.io);
         defer p.mutex.unlock(p.io);
         p.newLaunchLocked(launch.generation, if (launch.launched) asked else 0);
-        // In flight from its first record, by whichever caller, to the deadline `start` waits to.
-        if (launch.generation == p.launch and launch.generation > p.armed) {
-            p.armed = launch.generation;
-            p.launching = .{ .generation = launch.generation, .deadline = launch.at.addDuration(p.timing.launch_wait) };
+        // The first record of a launch puts it in flight, with the deadline `start` waits to.
+        if (launch.generation == p.launch and launch.generation > p.recorded_launch) {
+            p.recorded_launch = launch.generation;
+            p.launch_in_flight = .{ .generation = launch.generation, .deadline = launch.at.addDuration(p.timing.launch_wait) };
         }
     }
 
     // ---- The launch in flight ----
 
     /// A launch whose page isn't ready yet: connected, with MusicKit configured or failed to.
-    const Launching = struct {
+    const LaunchInFlight = struct {
         /// The channel's generation for it.
         generation: u64,
-        /// Its launch time plus the launch wait: one deadline for `start` and every joiner.
+        /// Its launch time plus the launch wait: one deadline for `start` and every waiter.
         deadline: Io.Timestamp,
     };
 
-    fn launchInFlight(p: *EnginePage) ?Launching {
+    /// The launch a control play waits for, newer than `waited_out`: the launch in flight, or
+    /// a newer launch on the channel whose launch call hasn't returned to its `start` yet. That
+    /// one has no launch time here yet, so it gets the launch wait from `since`.
+    fn launchToWaitFor(p: *EnginePage, waited_out: u64, since: Io.Timestamp) ?LaunchInFlight {
+        const current = p.channel.currentLaunch();
         p.mutex.lockUncancelable(p.io);
         defer p.mutex.unlock(p.io);
-        return p.launching;
+        if (current) |generation| if (generation > p.recorded_launch and generation > waited_out)
+            return .{ .generation = generation, .deadline = since.addDuration(p.timing.launch_wait) };
+        const l = p.launch_in_flight orelse return null;
+        return if (l.generation > waited_out) l else null;
     }
 
     /// Ends the launch in flight `generation`, unless it ended already or a newer one took its
@@ -861,40 +881,47 @@ pub const EnginePage = struct {
     fn landLaunch(p: *EnginePage, generation: u64) void {
         p.mutex.lockUncancelable(p.io);
         defer p.mutex.unlock(p.io);
-        const l = p.launching orelse return;
-        if (l.generation == generation) p.launching = null;
+        p.landLaunchLocked(generation);
+    }
+
+    fn landLaunchLocked(p: *EnginePage, generation: u64) void {
+        const l = p.launch_in_flight orelse return;
+        if (l.generation == generation) p.launch_in_flight = null;
     }
 
     /// Whether the launch `l` is over as the page shows it now: its page is ready, its launch
     /// wait ran out, or it ended.
-    fn launchOver(p: *EnginePage, a: Allocator, l: Launching) Allocator.Error!bool {
+    fn launchOver(p: *EnginePage, a: Allocator, l: LaunchInFlight) Allocator.Error!bool {
         if (p.channel.currentLaunch() != l.generation) return true;
-        if (try p.channel.lastReport(a)) |last| if (last.generation == l.generation and p.channel.connected()) if (playback.parseReport(a, last.json)) |report|
-            if (report.configureDone()) return true;
+        if (try p.readyReport(a) != null) return true;
         return p.now().nanoseconds >= l.deadline.nanoseconds;
     }
 
-    /// Waits out the launch in flight, if any, saying so once per call; null when none is. It
-    /// waits on the page, never on another caller: in steps of at most `timing.step`, each
-    /// checking the launch's own deadline, its end and the play's cancel. `.ended` once it is
-    /// over, or once a newer launch took its place.
-    fn joinLaunch(p: *EnginePage, r: *Reply, said: *bool, play: ?*const Plays.Play) Reply.Error!?enum { ended, cancelled } {
+    /// Waits for the launch a control play waits for (`launchToWaitFor`), if any, saying so
+    /// once per call; null when there is none. It waits on the page, never on another caller:
+    /// in steps of at most `timing.step`, each checking the launch's own deadline, its end and
+    /// the play's cancel. `.ended` once the launch is over, which moves `waited_out` to it, or
+    /// once a newer launch took its place.
+    fn waitForLaunch(p: *EnginePage, r: *Reply, said: *bool, waited_out: *u64, play: ?*const Plays.Play) Reply.Error!?enum { ended, cancelled } {
         const a = r.arena;
-        const l = p.launchInFlight() orelse return null;
-        const deadline: Deadline = .since(p.io, l.deadline, .zero);
+        const since = p.now();
+        const first = p.launchToWaitFor(waited_out.*, since) orelse return null;
         var seen = try p.channel.waitChange(null, .zero);
         while (true) {
             if (play) |pl| if (pl.cancelled()) return .cancelled;
-            const still = p.launchInFlight() orelse return .ended;
-            if (still.generation != l.generation) return .ended;
+            // Read again each step: once its `start` records it, the launch has its own deadline.
+            const l = p.launchToWaitFor(waited_out.*, since) orelse return .ended;
+            if (l.generation != first.generation) return .ended;
             if (try p.launchOver(a, l)) {
                 p.landLaunch(l.generation);
+                waited_out.* = l.generation;
                 return .ended;
             }
             if (!said.*) {
                 try r.print("{s}\n", .{starting_line});
                 said.* = true;
             }
+            const deadline: Deadline = .since(p.io, l.deadline, .zero);
             seen = try p.channel.waitChange(seen, .{ .nanoseconds = @max(0, @min(deadline.left().nanoseconds, p.timing.step.nanoseconds)) });
         }
     }
@@ -989,6 +1016,8 @@ pub const EnginePage = struct {
         p.reloads += 1;
         const reload: Reload = .{ .id = p.reloads, .launch = seen.launch, .from = .of(from), .deadline = p.now().addDuration(p.timing.reload_wait), .stamp = p.user_token };
         p.in_flight = reload;
+        // From now on, the reload's new page load is the one a control play waits for.
+        p.landLaunchLocked(seen.launch);
         return .{ .reload = reload };
     }
 
@@ -2212,6 +2241,43 @@ test "a control play during a launch in flight waits for its page to be ready, m
     };
 }
 
+test "a control play during the launch call itself, before its caller has recorded the launch, waits for the launch too" {
+    // `start` records the launch before the page is ready, or only after it.
+    for ([_]bool{ true, false }) |recorded_first| {
+        var rig: Rig = undefined;
+        rig.init(patient_launch);
+        defer rig.deinit();
+        // The launch's nonce is set and the page opens, but its stream waits, and `start` has
+        // yet to record the launch: the Daemon's launch call is still spawning the browser.
+        rig.fp.hold(.open, 1);
+        rig.launcher.holdLaunch();
+        var problem: []const u8 = "";
+        var starting = try testing.io.concurrent(EnginePage.start, .{ &rig.page, rig.newArena(), &problem });
+        defer drop(&starting);
+        try rig.launcher.arrivedLaunch();
+
+        const control = rig.caller();
+        var playing = try testing.io.concurrent(Caller.controlPlay, .{ control, "playNext" });
+        defer drop(&playing);
+        try control.printed(starting_line);
+        if (recorded_first) {
+            rig.launcher.releaseLaunch();
+            rig.fp.release(.open, .answer);
+            try playing.await(testing.io);
+        } else {
+            // The page is ready while its launch call still holds: the play goes on all the same.
+            rig.fp.release(.open, .answer);
+            try playing.await(testing.io);
+            rig.launcher.releaseLaunch();
+        }
+        try testing.expect((try starting.await(testing.io)).ready);
+        try testing.expectEqualStrings(starting_line ++ "\n", try control.out());
+        try testing.expect(rig.fp.calledOn("1", "playNext"));
+        try testing.expectEqual(playback.Music.starting, rig.fp.held());
+        try testing.expectEqual(@as(u32, 1), rig.launcher.launches);
+    }
+}
+
 test "a control play that a stop cancels while it waits for a launch in flight stops waiting, and sends nothing" {
     var rig: Rig = undefined;
     rig.init(patient_launch);
@@ -2254,7 +2320,7 @@ test "a control play waits no longer than the launch: it goes on at once when th
         rig.launcher.stop();
         // Its call finds no page, long before the launch wait would have run out.
         try testing.expectError(error.NoEnginePage, playing.await(testing.io));
-        try testing.expect(exited.durationTo(Io.Clock.awake.now(testing.io)).nanoseconds < Io.Duration.fromSeconds(5).nanoseconds);
+        try expectSoon(exited);
         try testing.expectError(error.EngineFailed, starting.await(testing.io));
     }
     var timing = patient_launch;

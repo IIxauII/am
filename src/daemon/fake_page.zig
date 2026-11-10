@@ -674,6 +674,8 @@ pub const FakePage = struct {
 
     /// The answer's fields (`"ok":…`), or null for none.
     fn run(fp: *FakePage, a: Allocator, index: usize, method: []const u8, gen: ?u64) (Allocator.Error || Io.Cancelable)!?[]const u8 {
+        // app.js `toggle` pauses or resumes: it passes `resume`'s gate.
+        const toggle = std.mem.eql(u8, method, "toggle");
         const op: Op = if (std.mem.eql(u8, method, "snapshot"))
             .snapshot
         else if (std.mem.eql(u8, method, "checkDeveloperToken"))
@@ -686,14 +688,13 @@ pub const FakePage = struct {
             .play_queue
         else if (std.mem.eql(u8, method, "pause"))
             .pause
-        else if (std.mem.eql(u8, method, "resume") or std.mem.eql(u8, method, "toggle"))
+        else if (std.mem.eql(u8, method, "resume") or toggle)
             .@"resume"
         else if (std.mem.eql(u8, method, "stop"))
             .stop
         else
             return try a.print("\"ok\":false,\"error\":\"TypeError | am[method] is not a function: {s}\"", .{method});
 
-        const toggle = std.mem.eql(u8, method, "toggle");
         // A play call or a resume runs in app.js `load` from the moment it is asked until it
         // answers: a stop meanwhile cancels it.
         var play_call: ?u64 = null;
