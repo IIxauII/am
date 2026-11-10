@@ -70,3 +70,13 @@ _Avoid_: option, config value
 **Env file**:
 The KEY=VALUE file `env` in am's config directory that holds settings.
 _Avoid_: config file, dotenv
+
+### Keys
+
+**Binding**:
+The keys an action has in a context (`lists` or `typing`): its defaults, changed by the settings file.
+_Avoid_: shortcut, hotkey, keymap
+
+**Action**:
+What a binding runs, named in the settings file (`play_pause`, `seek_back_30`). The names are a public format and never renamed.
+_Avoid_: command (the code's word)

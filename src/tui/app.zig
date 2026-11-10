@@ -640,7 +640,7 @@ pub const App = struct {
     fn onKey(app: *App, k: input.Key) void {
         app.dirty = true;
         const now = app.nowMs();
-        if (k.ctrl and k.code == .char and k.code.char == 'z') {
+        if (keys.fixed(k) == .suspend_process) {
             app.terminal.suspendProcess();
             app.onResize(app.terminal.resumed());
             return;
@@ -660,18 +660,13 @@ pub const App = struct {
             };
             if (ak) |key| return app.authEffect(app.machine.key(key, now));
             // The sign-in box over the session: the music keeps answering its keys.
-            if (app.machine.in_session) if (keys.command(k)) |cmd| switch (cmd) {
-                .toggle, .next, .previous, .seek, .volume, .mute => {
-                    app.ui.command(cmd, now);
-                    app.afterUi();
-                },
-                else => {},
-            };
+            if (app.machine.in_session) {
+                app.ui.playerKey(k, now);
+                app.afterUi();
+            }
             return;
         }
-        if (app.ui.textMode()) {
-            if (keys.textCommand(k)) |cmd| app.ui.text(cmd, now);
-        } else if (keys.command(k)) |cmd| app.ui.command(cmd, now);
+        app.ui.key(k, now);
         app.afterUi();
     }
 
@@ -763,10 +758,6 @@ pub const App = struct {
                 app.submitJob(&app.api_pool, .{ .related = .{ .item = v.list.rows.items[g.ref.row].item, .artist = g.artist } });
             },
             .quit => |q| app.quit = q.stop,
-            .suspend_process => {
-                app.terminal.suspendProcess();
-                app.onResize(app.terminal.resumed());
-            },
             .redraw => {
                 app.full_repaint = true;
                 if (app.protocol == .kitty_placeholders or app.protocol == .kitty_placements) {
@@ -2456,7 +2447,7 @@ const TestApp = struct {
 
     /// A songs view with these library songs, nothing loading.
     fn songs(t: *TestApp, items: []const Item) !*View {
-        t.app.ui.command(.{ .section = .songs }, 0);
+        t.app.ui.key(.char('3'), 0);
         t.app.ui.effectsDone();
         const v = t.app.ui.current().?;
         v.list.loading = false;
@@ -2492,8 +2483,7 @@ test "a full pool: a load stops its spinner, f puts the heart back, Enter rememb
     Filler.fill(&app.write_pool, &write_fill);
     Filler.fill(&app.daemon_pool, &daemon_fill);
 
-    app.ui.command(.{ .section = .songs }, 0);
-    app.afterUi();
+    app.onKey(.char('3'));
     const v = app.ui.current().?;
     try testing.expect(!v.list.loading);
     try testing.expect(v.list.failed != null);
@@ -2501,8 +2491,7 @@ test "a full pool: a load stops its spinner, f puts the heart back, Enter rememb
     var s = librarySong("i.1");
     s.favorited = false;
     try v.list.appendPage(&.{s}, null, 1);
-    app.ui.command(.favorite, 0);
-    app.afterUi();
+    app.onKey(.char('f'));
     try testing.expectEqual(@as(?bool, false), v.list.rows.items[0].item.favorited);
     try testing.expectEqualStrings(busy_text, app.toast_text.get());
 
@@ -2653,6 +2642,28 @@ fn takeJob(pool: *jobs.Pool) !*Job {
     return @alignCast(@fieldParentPtr("task", task));
 }
 
+test "the sign-in box over the session: the player's keys still answer, the others wait" {
+    var t: TestApp = undefined;
+    try t.init();
+    defer t.deinit();
+    t.signIn();
+    const app = t.app;
+    _ = try t.songs(&.{librarySong("i.1")});
+    app.machine.phase = .signing_in;
+    app.machine.in_session = true;
+
+    app.onKey(.char('1'));
+    app.onKey(.char('f'));
+    try testing.expectEqual(keys.Section.songs, app.ui.section);
+    try testing.expectEqual(@as(usize, 0), app.write_pool.pending());
+    try testing.expectEqual(@as(usize, 0), app.daemon_pool.pending());
+
+    app.onKey(.char(' '));
+    const job = try takeJob(&app.daemon_pool);
+    defer job.destroy();
+    try testing.expectEqual(player.Action.toggle, job.kind.control.action);
+}
+
 test "f on the playing song: Now Playing's heart flips too, and a failure puts both back" {
     var t: TestApp = undefined;
     try t.init();
@@ -2666,8 +2677,7 @@ test "f on the playing song: Now Playing's heart flips too, and a failure puts b
     now.favorited = false;
     app.now_item = now;
 
-    app.ui.command(.favorite, 0);
-    app.afterUi();
+    app.onKey(.char('f'));
     try testing.expectEqual(@as(?bool, true), v.list.rows.items[0].item.favorited);
     try testing.expectEqual(@as(?bool, true), app.now_item.?.favorited);
 
@@ -2696,8 +2706,7 @@ test "F: the playing song's row in the list flips too, and a favorite Apple keep
     now.favorited = true;
     app.now_item = now;
 
-    app.ui.command(.favorite_now, 0);
-    app.afterUi();
+    app.onKey(.char('F'));
     try testing.expectEqual(@as(?bool, false), app.now_item.?.favorited);
     try testing.expectEqual(@as(?bool, false), v.list.rows.items[0].item.favorited);
     try testing.expectEqual(@as(?bool, true), v.list.rows.items[1].item.favorited);
