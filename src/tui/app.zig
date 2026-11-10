@@ -638,7 +638,7 @@ pub const App = struct {
     }
 
     fn onKey(app: *App, k: input.Key) void {
-        // Few terminals report Super, and none the same way, so no key with it does anything.
+        // A key with Super does nothing anywhere, ^c and ^z included (see `input.Key.super`).
         if (k.super) return;
         app.dirty = true;
         const now = app.nowMs();

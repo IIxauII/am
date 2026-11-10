@@ -500,14 +500,15 @@ const ReplyEnd = union(enum) {
 /// `;` and a message, then `ESC \`. Strict, so that keys someone types after Alt-_ G are only
 /// held while they could still be a reply.
 fn kittyReplyEnd(body: []const u8) ReplyEnd {
-    var at: enum { key, equals, value, message } = .key;
+    // Control data is `name=value` pairs, each name one letter.
+    var at: enum { name, equals, value, message } = .name;
     for (body, 0..) |c, i| {
         if (c == 0x1b) {
             if (i + 1 == body.len) return .open;
             return if (body[i + 1] == '\\') .{ .st = i } else .bad;
         }
         at = switch (at) {
-            .key => switch (c) {
+            .name => switch (c) {
                 'a'...'z', 'A'...'Z' => .equals,
                 ';' => .message,
                 else => return .bad,
@@ -515,7 +516,7 @@ fn kittyReplyEnd(body: []const u8) ReplyEnd {
             .equals => if (c == '=') .value else return .bad,
             .value => switch (c) {
                 '0'...'9', 'a'...'z', 'A'...'Z', '-' => .value,
-                ',' => .key,
+                ',' => .name,
                 ';' => .message,
                 else => return .bad,
             },
@@ -596,7 +597,7 @@ test "modifiers on cursor keys" {
 }
 
 test "modifier bit 8 is Super, not Alt" {
-    // kitty's protocol, and Ghostty, kitty and Alacritty without it: Super+↑ is `CSI 1;9A`.
+    // kitty's protocol, and Ghostty, kitty, Alacritty and foot without it: Super+↑ is `CSI 1;9A`.
     try expectKeys("\x1b[1;9A", &.{.{ .code = .up, .super = true }});
     try expectKeys("\x1b[97;9u", &.{.{ .code = .{ .char = 'a' }, .super = true }});
     // Ghostty's Super+Enter, in the modifyOtherKeys form.
