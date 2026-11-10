@@ -272,10 +272,10 @@ pub fn failPageCall(r: *Reply, e: Host.CallError, method: []const u8, timeout: I
     };
 }
 
-/// A control play (Space, `am resume`, play-next, play-later) on its way to its page call. It
-/// waits out what is in flight (`Page.waitOutInFlight`) first. A launch since that wait (a
-/// relaunch) leaves its look or its page call no page: it then waits for that launch's page and
-/// tries once more (`again`). It never repairs.
+/// A control play (Space, `am resume`, play-next, play-later) on its way to its page call. Its
+/// caller waits out what is in flight (`Page.waitOutInFlight`) first. When a launch since that
+/// wait (a relaunch) leaves the play's look or page call no page, `again` tells the caller to
+/// wait for that launch's page and try once more. It never repairs.
 pub const ControlPlay = struct {
     play: *Play,
     /// The engine the play waits out what is in flight on; null: none ran.

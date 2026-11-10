@@ -17,9 +17,9 @@
 //! without repairing anything, so its page call lands on the new page load. It also waits for a
 //! launch in flight, so its page call lands once the launch's page is ready. A launch is in
 //! flight from its launch call until its page is ready, its launch wait runs out, it ends, or a
-//! reload of its page is recorded. A launch after that wait (a relaunch) leaves its page call no
-//! page: the play then waits for that launch and tries once more. Callers that launch the engine
-//! (a play, doctor, keep-engine) wait for its page in `start` instead.
+//! reload of its page is recorded. When a launch after the control play's wait (a relaunch)
+//! leaves its page call no page, the play waits for that launch and tries once more. Callers
+//! that launch the engine (a play, doctor, keep-engine) wait for its page in `start` instead.
 //!
 //! A decision is acted on, and a verdict returned, only while no reload, launch or sign-in has
 //! come since its inputs were read, and the reloads of doctor and the sign-in only while no play
@@ -263,7 +263,7 @@ pub const Page = struct {
     /// Call it after reading the engine's state (`Host.state`). A launch shows on the channel
     /// only once its launch call has set its nonce, and the state waits out a launch call that
     /// holds the engine before that. A launch that comes after it returns (a relaunch) leaves
-    /// the page call no page: `play.ControlPlay` waits again and retries then.
+    /// the page call no page: `play.ControlPlay.again` tells the play to wait again and retry.
     pub fn waitOutInFlight(pg: Page, r: *Reply, play: ?*const Plays.Play) Reply.Error!void {
         return pg.vtable.waitOutInFlight(pg.ptr, r, play);
     }
