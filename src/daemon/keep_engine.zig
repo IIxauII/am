@@ -4,8 +4,10 @@
 //! close can't fire; once the last one closes, the idle limit counts from then.
 //!
 //! On open it launches the engine and waits for its page, as `am doctor` does, but prints
-//! nothing and repairs nothing. It never launches again: an engine that fails to start, exits on
-//! its own or is closed by `am signin --engine` stays down until the next play launches it.
+//! nothing and repairs nothing. An engine already running is held as it is, even one whose page
+//! has no stream, which `start` would relaunch. It never launches again: an engine that fails to
+//! start, exits on its own or is closed by `am signin --engine` stays down until the next play
+//! launches it.
 const std = @import("std");
 const host_mod = @import("host.zig");
 const protocol = @import("protocol.zig");
@@ -24,11 +26,13 @@ pub const Options = struct {
 
 /// Runs until its client goes or the daemon stops (`error.Canceled`).
 pub fn run(host: Host, io: Io, r: *Reply, options: Options) Reply.Error!void {
-    var problem: []const u8 = "";
-    // Silent and not retried: the next play reports any error.
-    if (host.page.start(r.arena, &problem)) |_| {} else |e| switch (e) {
-        error.EngineFailed => host.log("keep-alive: the engine didn't start: {s}", .{problem}),
-        error.OutOfMemory, error.Canceled => |x| return x,
+    if (!try engineRunning(host, r.arena)) {
+        var problem: []const u8 = "";
+        // Silent and not retried: the next play reports any error.
+        if (host.page.start(r.arena, &problem)) |_| {} else |e| switch (e) {
+            error.EngineFailed => host.log("keep-alive: the engine didn't start: {s}", .{problem}),
+            error.OutOfMemory, error.Canceled => |x| return x,
+        }
     }
     var beat: Io.Clock.Timestamp = .now(io, .awake);
     while (!r.clientGone()) {
@@ -38,6 +42,13 @@ pub fn run(host: Host, io: Io, r: *Reply, options: Options) Reply.Error!void {
             beat = .now(io, .awake);
         }
     }
+}
+
+/// Whether the engine runs. A sign-in window isn't it: `start` closes one nobody waits on, to
+/// launch the engine.
+fn engineRunning(host: Host, arena: std.mem.Allocator) std.mem.Allocator.Error!bool {
+    const engine = (try host.state(arena)).engine orelse return false;
+    return !engine.signin_window;
 }
 
 const testing = std.testing;
@@ -181,6 +192,27 @@ test "keep-engine holds an engine already running as it is and launches none aft
     const printed = try held.shutDown();
     try testing.expectEqual(@as(u8, 1), printed.code);
     try testing.expectEqualStrings("error: the background process shut down\n", printed.err);
+    try testing.expectEqualStrings("", printed.out);
+}
+
+test "keep-engine holds an engine already running whose page has no stream as it is: no relaunch, which would cut its music" {
+    var rig: Rig = undefined;
+    rig.init(Rig.timing);
+    defer rig.deinit();
+    var ph: PageHost = .{ .rig = &rig };
+    // A CLI play launched it, and its page has no stream now. A start relaunches such an engine
+    // once its launch is older than the launch wait.
+    rig.fp.hold(.open, 1);
+    try ph.launch();
+    try rig.fp.arrived(.open);
+    rig.page.timing.launch_wait = .zero;
+    var held: Held = undefined;
+    try held.open(&ph);
+    try manySteps();
+    try testing.expect(held.isOpen());
+    try testing.expectEqual(@as(u32, 1), rig.launcher.launchCount());
+    rig.fp.release(.open, .answer);
+    const printed = try held.close();
     try testing.expectEqualStrings("", printed.out);
 }
 

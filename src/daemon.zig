@@ -394,8 +394,7 @@ pub const EngineView = struct {
     /// starting, is on its way to nothing.
     own_play_stopped: bool = false,
     /// The quitting TUI holds a keep-engine request, and nothing besides it uses the daemon: a
-    /// page still loading is that request's launch, on its way to nothing. Its last report
-    /// still counts: a page whose stream dropped may be playing.
+    /// page still loading waits for nobody else, so it is on its way to nothing.
     own_keep_alive: bool = false,
 };
 
@@ -406,9 +405,9 @@ const stale_report_ms = 5000;
 /// included), a song starting or a queue on its way, a page still loading, a sign-in window
 /// open or a sign-in waiting, or a page that stopped reporting (it may be playing). A page
 /// loading or a song starting is nobody's once the quitting TUI's own play was stopped
-/// (`EngineView.own_play_stopped`), and a page loading is nobody's when the quitting TUI's own
-/// keep-alive launched it (`EngineView.own_keep_alive`). Such a page that isn't ready still
-/// counts by its last report: one whose stream dropped may be playing.
+/// (`EngineView.own_play_stopped`), and a page loading is nobody's when only the quitting TUI's
+/// own keep-alive holds the engine (`EngineView.own_keep_alive`). Such a page that isn't ready
+/// still counts by its last report: one whose stream dropped may be playing.
 pub fn engineInUse(e: EngineView, signins_waiting: u32) ?[]const u8 {
     if (signins_waiting > 0) return "a sign-in is waiting";
     if (!e.running) return null;

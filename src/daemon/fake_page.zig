@@ -1013,7 +1013,7 @@ pub const FakeLauncher = struct {
     relaunch_asks: u32 = 0,
     /// Every line for the daemon's log; guarded by the fake page's mutex.
     logged: std.ArrayList([]const u8) = .empty,
-    /// The next launch fails with this problem.
+    /// Every launch fails with this problem while it is set (`setRefuse`).
     refuse: ?[]const u8 = null,
     /// The next launch that starts the engine, held where its caller has the launch and
     /// hasn't recorded it yet; guarded by the fake page's mutex.
