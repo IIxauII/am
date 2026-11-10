@@ -2521,7 +2521,7 @@ test "a key with Super runs nothing, on the sign-in screen and in the session" {
     try t.init();
     defer t.deinit();
     const app = t.app;
-    // The sign-in screen: Super+q doesn't quit, Super+^c neither.
+    // The sign-in screen: Super-q doesn't quit, Super-^c neither.
     app.handle(.{ .key = .{ .code = .{ .char = 'q' }, .super = true } });
     app.handle(.{ .key = .{ .code = .{ .char = 'c' }, .ctrl = true, .super = true } });
     try testing.expectEqual(null, app.quit);
