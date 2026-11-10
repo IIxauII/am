@@ -314,7 +314,7 @@ fn drawSidebar(s: *Screen, f: *Frame, t: Theme, r: Rect) void {
         if (picked) s.fill(r.x, y, r.w, 1, style);
         const indent: u16 = if (sec.inLibrary()) 3 else 1;
         var label_buf: [48]u8 = undefined;
-        const hot = sec.hotkey();
+        const hot = sec.defaultKey();
         const label = if (hot) |k|
             std.fmt.bufPrint(&label_buf, "{c} {s}", .{ k, sec.title() }) catch sec.title()
         else
@@ -357,7 +357,7 @@ fn tabLabel(buf: []u8, sec: keys.Section, short: bool) []const u8 {
         .queue => "Queue",
         else => sec.title(),
     };
-    const k = sec.hotkey() orelse return if (short) "" else name;
+    const k = sec.defaultKey() orelse return if (short) "" else name;
     if (short) return std.fmt.bufPrint(buf, "{c}", .{k}) catch "";
     return std.fmt.bufPrint(buf, "{c} {s}", .{ k, name }) catch name;
 }

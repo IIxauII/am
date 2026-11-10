@@ -42,7 +42,7 @@ pub const Section = enum {
 
     /// The key that jumps to it by default, if any, for the sidebar and tab labels: its
     /// action's first default key, when that is a plain ASCII character.
-    pub fn hotkey(s: Section) ?u8 {
+    pub fn defaultKey(s: Section) ?u8 {
         const want: Command = if (s == .search) .search else .{ .section = s };
         for (actions) |a| switch (a.does) {
             .lists => |cmd| if (std.meta.eql(cmd, want)) {
@@ -178,7 +178,7 @@ pub const Action = struct {
     name: []const u8,
     group: Group,
     does: Does,
-    /// Today's keys, folded (`fold`). Empty: no key by default.
+    /// Its keys until the settings file changes them, folded (`fold`). Empty: no key.
     defaults: []const Key,
     /// What it does, in a few words.
     help: []const u8,
@@ -188,14 +188,6 @@ pub const Action = struct {
     }
 };
 
-fn ch(c: u21) Key {
-    return .char(c);
-}
-
-fn ctl(c: u21) Key {
-    return .ctrlChar(c);
-}
-
 fn named(c: Key.Code) Key {
     return .{ .code = c };
 }
@@ -204,87 +196,87 @@ fn shifted(c: Key.Code) Key {
     return .{ .code = c, .shift = true };
 }
 
-fn list(name: []const u8, group: Group, cmd: Command, defaults: []const Key, help_text: []const u8) Action {
+fn listsAction(name: []const u8, group: Group, cmd: Command, defaults: []const Key, help_text: []const u8) Action {
     return .{ .name = name, .group = group, .does = .{ .lists = cmd }, .defaults = defaults, .help = help_text };
 }
 
-fn typing(name: []const u8, cmd: TextCommand, defaults: []const Key, help_text: []const u8) Action {
+fn typingAction(name: []const u8, cmd: TextCommand, defaults: []const Key, help_text: []const u8) Action {
     return .{ .name = name, .group = .typing, .does = .{ .typing = cmd }, .defaults = defaults, .help = help_text };
 }
 
 /// Every action, in Settings page order. `^c` and `^z` are fixed (`fixed`), so they're not here.
 pub const actions = [_]Action{
-    list("move_down", .move, .{ .move = 1 }, &.{ ch('j'), named(.down), ctl('n') }, "Move down"),
-    list("move_up", .move, .{ .move = -1 }, &.{ ch('k'), named(.up), ctl('p') }, "Move up"),
-    list("top", .move, .top, &.{ ch('g'), named(.home) }, "Top"),
-    list("bottom", .move, .bottom, &.{ ch('G'), named(.end) }, "Bottom"),
-    list("page_down", .move, .{ .page = 1 }, &.{named(.page_down)}, "Page down"),
-    list("page_up", .move, .{ .page = -1 }, &.{named(.page_up)}, "Page up"),
-    list("half_page_down", .move, .{ .half = 1 }, &.{ctl('d')}, "Half page down"),
-    list("half_page_up", .move, .{ .half = -1 }, &.{ctl('u')}, "Half page up"),
-    list("focus_next", .move, .focus_next, &.{named(.tab)}, "Other pane"),
-    list("focus_previous", .move, .focus_prev, &.{shifted(.tab)}, "Other pane, backwards"),
-    list("focus_left", .move, .focus_left, &.{ch('h')}, "To the sidebar"),
-    list("focus_right", .move, .focus_right, &.{ch('l')}, "To the list"),
-    list("open", .move, .open, &.{named(.enter)}, "Open, or play from here"),
-    list("back", .move, .back, &.{ named(.esc), named(.backspace) }, "Back"),
-    list("filter", .move, .filter, &.{ctl('f')}, "Filter this list"),
-    list("go_album", .move, .go_album, &.{ch('o')}, "Go to album"),
-    list("go_artist", .move, .go_artist, &.{ch('O')}, "Go to artist"),
-    list("go_playing", .move, .jump_now, &.{ch('c')}, "Go to what's playing"),
+    listsAction("move_down", .move, .{ .move = 1 }, &.{ .char('j'), named(.down), .ctrlChar('n') }, "Move down"),
+    listsAction("move_up", .move, .{ .move = -1 }, &.{ .char('k'), named(.up), .ctrlChar('p') }, "Move up"),
+    listsAction("top", .move, .top, &.{ .char('g'), named(.home) }, "Top"),
+    listsAction("bottom", .move, .bottom, &.{ .char('G'), named(.end) }, "Bottom"),
+    listsAction("page_down", .move, .{ .page = 1 }, &.{named(.page_down)}, "Page down"),
+    listsAction("page_up", .move, .{ .page = -1 }, &.{named(.page_up)}, "Page up"),
+    listsAction("half_page_down", .move, .{ .half = 1 }, &.{.ctrlChar('d')}, "Half page down"),
+    listsAction("half_page_up", .move, .{ .half = -1 }, &.{.ctrlChar('u')}, "Half page up"),
+    listsAction("focus_next", .move, .focus_next, &.{named(.tab)}, "Other pane"),
+    listsAction("focus_previous", .move, .focus_prev, &.{shifted(.tab)}, "Other pane, backwards"),
+    listsAction("focus_left", .move, .focus_left, &.{.char('h')}, "To the sidebar"),
+    listsAction("focus_right", .move, .focus_right, &.{.char('l')}, "To the list"),
+    listsAction("open", .move, .open, &.{named(.enter)}, "Open, or play from here"),
+    listsAction("back", .move, .back, &.{ named(.esc), named(.backspace) }, "Back"),
+    listsAction("filter", .move, .filter, &.{.ctrlChar('f')}, "Filter this list"),
+    listsAction("go_album", .move, .go_album, &.{.char('o')}, "Go to album"),
+    listsAction("go_artist", .move, .go_artist, &.{.char('O')}, "Go to artist"),
+    listsAction("go_playing", .move, .jump_now, &.{.char('c')}, "Go to what's playing"),
 
-    list("section_home", .sections, .{ .section = .home }, &.{ch('1')}, "Home"),
-    list("section_recent", .sections, .{ .section = .recent }, &.{ch('2')}, "Recently Played"),
-    list("section_songs", .sections, .{ .section = .songs }, &.{ch('3')}, "Songs"),
-    list("section_albums", .sections, .{ .section = .albums }, &.{ch('4')}, "Albums"),
-    list("section_artists", .sections, .{ .section = .artists }, &.{ch('5')}, "Artists"),
-    list("section_playlists", .sections, .{ .section = .playlists }, &.{ch('6')}, "Playlists"),
-    list("section_favorites", .sections, .{ .section = .favorites }, &.{ch('7')}, "Favorites"),
-    list("section_radio", .sections, .{ .section = .radio }, &.{ch('8')}, "Radio"),
-    list("section_charts", .sections, .{ .section = .charts }, &.{ch('9')}, "Charts"),
-    list("section_recently_added", .sections, .{ .section = .recently_added }, &.{}, "Recently Added"),
-    list("section_queue", .sections, .{ .section = .queue }, &.{ch('0')}, "Up Next"),
-    list("search", .sections, .search, &.{ch('/')}, "Search"),
+    listsAction("section_home", .sections, .{ .section = .home }, &.{.char('1')}, "Home"),
+    listsAction("section_recent", .sections, .{ .section = .recent }, &.{.char('2')}, "Recently Played"),
+    listsAction("section_songs", .sections, .{ .section = .songs }, &.{.char('3')}, "Songs"),
+    listsAction("section_albums", .sections, .{ .section = .albums }, &.{.char('4')}, "Albums"),
+    listsAction("section_artists", .sections, .{ .section = .artists }, &.{.char('5')}, "Artists"),
+    listsAction("section_playlists", .sections, .{ .section = .playlists }, &.{.char('6')}, "Playlists"),
+    listsAction("section_favorites", .sections, .{ .section = .favorites }, &.{.char('7')}, "Favorites"),
+    listsAction("section_radio", .sections, .{ .section = .radio }, &.{.char('8')}, "Radio"),
+    listsAction("section_charts", .sections, .{ .section = .charts }, &.{.char('9')}, "Charts"),
+    listsAction("section_recently_added", .sections, .{ .section = .recently_added }, &.{}, "Recently Added"),
+    listsAction("section_queue", .sections, .{ .section = .queue }, &.{.char('0')}, "Up Next"),
+    listsAction("search", .sections, .search, &.{.char('/')}, "Search"),
 
-    list("play_pause", .play, .toggle, &.{ch(' ')}, "Play / pause"),
-    list("next", .play, .next, &.{ ch('n'), ch('>') }, "Next"),
-    list("previous", .play, .previous, &.{ ch('p'), ch('<') }, "Previous"),
-    list("seek_back_5", .play, .{ .seek = -5 }, &.{named(.left)}, "Seek back 5 s"),
-    list("seek_forward_5", .play, .{ .seek = 5 }, &.{named(.right)}, "Seek forward 5 s"),
-    list("seek_back_30", .play, .{ .seek = -30 }, &.{ ch('['), shifted(.left) }, "Seek back 30 s"),
-    list("seek_forward_30", .play, .{ .seek = 30 }, &.{ ch(']'), shifted(.right) }, "Seek forward 30 s"),
-    list("volume_up", .play, .{ .volume = 5 }, &.{ ch('+'), ch('=') }, "Volume up"),
-    list("volume_down", .play, .{ .volume = -5 }, &.{ch('-')}, "Volume down"),
-    list("mute", .play, .mute, &.{ch('m')}, "Mute"),
-    list("shuffle", .play, .shuffle, &.{ch('s')}, "Shuffle"),
-    list("repeat", .play, .repeat, &.{ch('r')}, "Repeat: off, all, one"),
-    list("play_from_top", .play, .play_container, &.{ch('P')}, "Play album or playlist from the top"),
-    list("play_later", .play, .play_later, &.{ch('e')}, "Play later"),
-    list("play_next", .play, .play_next, &.{ch('E')}, "Play next"),
-    list("station", .play, .station, &.{ch('R')}, "Station from the selection"),
-    list("remove", .play, .remove, &.{ ch('d'), named(.delete) }, "Remove from Up Next"),
+    listsAction("play_pause", .play, .toggle, &.{.char(' ')}, "Play / pause"),
+    listsAction("next", .play, .next, &.{ .char('n'), .char('>') }, "Next"),
+    listsAction("previous", .play, .previous, &.{ .char('p'), .char('<') }, "Previous"),
+    listsAction("seek_back_5", .play, .{ .seek = -5 }, &.{named(.left)}, "Seek back 5 s"),
+    listsAction("seek_forward_5", .play, .{ .seek = 5 }, &.{named(.right)}, "Seek forward 5 s"),
+    listsAction("seek_back_30", .play, .{ .seek = -30 }, &.{ .char('['), shifted(.left) }, "Seek back 30 s"),
+    listsAction("seek_forward_30", .play, .{ .seek = 30 }, &.{ .char(']'), shifted(.right) }, "Seek forward 30 s"),
+    listsAction("volume_up", .play, .{ .volume = 5 }, &.{ .char('+'), .char('=') }, "Volume up"),
+    listsAction("volume_down", .play, .{ .volume = -5 }, &.{.char('-')}, "Volume down"),
+    listsAction("mute", .play, .mute, &.{.char('m')}, "Mute"),
+    listsAction("shuffle", .play, .shuffle, &.{.char('s')}, "Shuffle"),
+    listsAction("repeat", .play, .repeat, &.{.char('r')}, "Repeat: off, all, one"),
+    listsAction("play_from_top", .play, .play_container, &.{.char('P')}, "Play album or playlist from the top"),
+    listsAction("play_later", .play, .play_later, &.{.char('e')}, "Play later"),
+    listsAction("play_next", .play, .play_next, &.{.char('E')}, "Play next"),
+    listsAction("station", .play, .station, &.{.char('R')}, "Station from the selection"),
+    listsAction("remove", .play, .remove, &.{ .char('d'), named(.delete) }, "Remove from Up Next"),
 
-    list("favorite", .library, .favorite, &.{ch('f')}, "Favorite the selection"),
-    list("favorite_playing", .library, .favorite_now, &.{ch('F')}, "Favorite what's playing"),
-    list("add_to_library", .library, .add_library, &.{ch('a')}, "Add to library"),
-    list("add_to_playlist", .library, .add_playlist, &.{ch('A')}, "Add to a playlist"),
-    list("details", .library, .info, &.{ch('i')}, "Details"),
+    listsAction("favorite", .library, .favorite, &.{.char('f')}, "Favorite the selection"),
+    listsAction("favorite_playing", .library, .favorite_now, &.{.char('F')}, "Favorite what's playing"),
+    listsAction("add_to_library", .library, .add_library, &.{.char('a')}, "Add to library"),
+    listsAction("add_to_playlist", .library, .add_playlist, &.{.char('A')}, "Add to a playlist"),
+    listsAction("details", .library, .info, &.{.char('i')}, "Details"),
 
-    list("artwork", .app, .image_mode, &.{ch('v')}, "Artwork: images, blocks, off"),
-    list("reload_view", .app, .refresh, &.{ctl('r')}, "Reload view"),
-    list("redraw", .app, .redraw, &.{ctl('l')}, "Redraw"),
-    list("quit", .app, .quit, &.{ch('q')}, "Quit (the music goes on)"),
-    list("quit_and_stop", .app, .quit_stop, &.{ch('Q')}, "Quit and stop the music"),
-    list("sign_in", .app, .signin, &.{ch('S')}, "Sign in to Apple Music again"),
-    list("help", .app, .help, &.{ch('?')}, "Help"),
+    listsAction("artwork", .app, .image_mode, &.{.char('v')}, "Artwork: images, blocks, off"),
+    listsAction("reload_view", .app, .refresh, &.{.ctrlChar('r')}, "Reload view"),
+    listsAction("redraw", .app, .redraw, &.{.ctrlChar('l')}, "Redraw"),
+    listsAction("quit", .app, .quit, &.{.char('q')}, "Quit (the music goes on)"),
+    listsAction("quit_and_stop", .app, .quit_stop, &.{.char('Q')}, "Quit and stop the music"),
+    listsAction("sign_in", .app, .signin, &.{.char('S')}, "Sign in to Apple Music again"),
+    listsAction("help", .app, .help, &.{.char('?')}, "Help"),
 
-    typing("delete_back", .delete_back, &.{named(.backspace)}, "Delete back"),
-    typing("clear", .clear, &.{ctl('u')}, "Clear the field"),
-    typing("submit", .submit, &.{named(.enter)}, "Search, or submit"),
-    typing("leave", .leave, &.{named(.esc)}, "Leave the field"),
-    typing("move_down", .down, &.{named(.down)}, "Down to the list"),
-    typing("move_up", .up, &.{named(.up)}, "Up"),
-    typing("switch_scope", .toggle_scope, &.{named(.tab)}, "Catalog or library search"),
+    typingAction("delete_back", .delete_back, &.{named(.backspace)}, "Delete back"),
+    typingAction("clear", .clear, &.{.ctrlChar('u')}, "Clear the field"),
+    typingAction("submit", .submit, &.{named(.enter)}, "Search, or submit"),
+    typingAction("leave", .leave, &.{named(.esc)}, "Leave the field"),
+    typingAction("move_down", .down, &.{named(.down)}, "Down to the list"),
+    typingAction("move_up", .up, &.{named(.up)}, "Up"),
+    typingAction("switch_scope", .toggle_scope, &.{named(.tab)}, "Catalog or library search"),
 };
 
 /// The keys each action has, by its place in `actions`: the defaults, until the settings file
@@ -354,6 +346,7 @@ pub const Fixed = enum {
     suspend_process,
 };
 
+/// The fixed key `key` is, after folding, if it is one. It must match whole: Ctrl+Alt+c isn't `^c`.
 pub fn fixed(key: Key) ?Fixed {
     const k = fold(key);
     if (k.eql(.ctrlChar('c'))) return .quit;
@@ -428,11 +421,11 @@ pub const help = [_]HelpSection{
 const testing = std.testing;
 
 test "the sidebar and tabs label each section with its default key" {
-    try testing.expectEqual(@as(?u8, '1'), Section.home.hotkey());
-    try testing.expectEqual(@as(?u8, '9'), Section.charts.hotkey());
-    try testing.expectEqual(@as(?u8, '0'), Section.queue.hotkey());
-    try testing.expectEqual(@as(?u8, '/'), Section.search.hotkey());
-    try testing.expectEqual(@as(?u8, null), Section.recently_added.hotkey());
+    try testing.expectEqual(@as(?u8, '1'), Section.home.defaultKey());
+    try testing.expectEqual(@as(?u8, '9'), Section.charts.defaultKey());
+    try testing.expectEqual(@as(?u8, '0'), Section.queue.defaultKey());
+    try testing.expectEqual(@as(?u8, '/'), Section.search.defaultKey());
+    try testing.expectEqual(@as(?u8, null), Section.recently_added.defaultKey());
 }
 
 test "every help key names a binding" {
@@ -441,52 +434,113 @@ test "every help key names a binding" {
         try testing.expect(Bindings.defaults.lookup(.lists, .char(c)) != null);
 }
 
-/// The names `settings.json` gives the actions, per context. They are a public format: a
-/// user's file names them. Add a new action's name here; never rename or remove one.
-const pinned_names = struct {
-    const lists = [_][]const u8{
-        // Move
-        "move_down",         "move_up",        "top",             "bottom",
-        "page_down",         "page_up",        "half_page_down",  "half_page_up",
-        "focus_next",        "focus_previous", "focus_left",      "focus_right",
-        "open",              "back",           "filter",          "go_album",
-        "go_artist",         "go_playing",
-        // Sections
-            "section_home",    "section_recent",
-        "section_songs",     "section_albums", "section_artists", "section_playlists",
-        "section_favorites", "section_radio",  "section_charts",  "section_recently_added",
-        "section_queue",     "search",
-        // Play
-                "play_pause",      "next",
-        "previous",          "seek_back_5",    "seek_forward_5",  "seek_back_30",
-        "seek_forward_30",   "volume_up",      "volume_down",     "mute",
-        "shuffle",           "repeat",         "play_from_top",   "play_later",
-        "play_next",         "station",        "remove",
-        // Library
-                 "favorite",
-        "favorite_playing",  "add_to_library", "add_to_playlist", "details",
-        // App
-        "artwork",           "reload_view",    "redraw",          "quit",
-        "quit_and_stop",     "sign_in",        "help",
-    };
-    const typing = [_][]const u8{ "delete_back", "clear", "submit", "leave", "move_down", "move_up", "switch_scope" };
+/// The names `settings.json` gives the actions, each with what it runs. They are a public
+/// format: a user's file names them. Add a new action here; never rename, remove or repoint
+/// one. Renaming a command in the code only means renaming it here too.
+const Pin = struct { []const u8, Does };
+const pinned = [_]Pin{
+    .{ "move_down", .{ .lists = .{ .move = 1 } } },
+    .{ "move_up", .{ .lists = .{ .move = -1 } } },
+    .{ "top", .{ .lists = .top } },
+    .{ "bottom", .{ .lists = .bottom } },
+    .{ "page_down", .{ .lists = .{ .page = 1 } } },
+    .{ "page_up", .{ .lists = .{ .page = -1 } } },
+    .{ "half_page_down", .{ .lists = .{ .half = 1 } } },
+    .{ "half_page_up", .{ .lists = .{ .half = -1 } } },
+    .{ "focus_next", .{ .lists = .focus_next } },
+    .{ "focus_previous", .{ .lists = .focus_prev } },
+    .{ "focus_left", .{ .lists = .focus_left } },
+    .{ "focus_right", .{ .lists = .focus_right } },
+    .{ "open", .{ .lists = .open } },
+    .{ "back", .{ .lists = .back } },
+    .{ "filter", .{ .lists = .filter } },
+    .{ "go_album", .{ .lists = .go_album } },
+    .{ "go_artist", .{ .lists = .go_artist } },
+    .{ "go_playing", .{ .lists = .jump_now } },
+
+    .{ "section_home", .{ .lists = .{ .section = .home } } },
+    .{ "section_recent", .{ .lists = .{ .section = .recent } } },
+    .{ "section_songs", .{ .lists = .{ .section = .songs } } },
+    .{ "section_albums", .{ .lists = .{ .section = .albums } } },
+    .{ "section_artists", .{ .lists = .{ .section = .artists } } },
+    .{ "section_playlists", .{ .lists = .{ .section = .playlists } } },
+    .{ "section_favorites", .{ .lists = .{ .section = .favorites } } },
+    .{ "section_radio", .{ .lists = .{ .section = .radio } } },
+    .{ "section_charts", .{ .lists = .{ .section = .charts } } },
+    .{ "section_recently_added", .{ .lists = .{ .section = .recently_added } } },
+    .{ "section_queue", .{ .lists = .{ .section = .queue } } },
+    .{ "search", .{ .lists = .search } },
+
+    .{ "play_pause", .{ .lists = .toggle } },
+    .{ "next", .{ .lists = .next } },
+    .{ "previous", .{ .lists = .previous } },
+    .{ "seek_back_5", .{ .lists = .{ .seek = -5 } } },
+    .{ "seek_forward_5", .{ .lists = .{ .seek = 5 } } },
+    .{ "seek_back_30", .{ .lists = .{ .seek = -30 } } },
+    .{ "seek_forward_30", .{ .lists = .{ .seek = 30 } } },
+    .{ "volume_up", .{ .lists = .{ .volume = 5 } } },
+    .{ "volume_down", .{ .lists = .{ .volume = -5 } } },
+    .{ "mute", .{ .lists = .mute } },
+    .{ "shuffle", .{ .lists = .shuffle } },
+    .{ "repeat", .{ .lists = .repeat } },
+    .{ "play_from_top", .{ .lists = .play_container } },
+    .{ "play_later", .{ .lists = .play_later } },
+    .{ "play_next", .{ .lists = .play_next } },
+    .{ "station", .{ .lists = .station } },
+    .{ "remove", .{ .lists = .remove } },
+
+    .{ "favorite", .{ .lists = .favorite } },
+    .{ "favorite_playing", .{ .lists = .favorite_now } },
+    .{ "add_to_library", .{ .lists = .add_library } },
+    .{ "add_to_playlist", .{ .lists = .add_playlist } },
+    .{ "details", .{ .lists = .info } },
+
+    .{ "artwork", .{ .lists = .image_mode } },
+    .{ "reload_view", .{ .lists = .refresh } },
+    .{ "redraw", .{ .lists = .redraw } },
+    .{ "quit", .{ .lists = .quit } },
+    .{ "quit_and_stop", .{ .lists = .quit_stop } },
+    .{ "sign_in", .{ .lists = .signin } },
+    .{ "help", .{ .lists = .help } },
+
+    .{ "delete_back", .{ .typing = .delete_back } },
+    .{ "clear", .{ .typing = .clear } },
+    .{ "submit", .{ .typing = .submit } },
+    .{ "leave", .{ .typing = .leave } },
+    .{ "move_down", .{ .typing = .down } },
+    .{ "move_up", .{ .typing = .up } },
+    .{ "switch_scope", .{ .typing = .toggle_scope } },
 };
 
-fn expectNamesPinned(context: Context, pinned: []const []const u8) !void {
-    for (pinned) |name| {
-        var found: usize = 0;
-        for (actions) |a| found += @intFromBool(a.context() == context and std.mem.eql(u8, a.name, name));
-        testing.expectEqual(@as(usize, 1), found) catch |err| {
-            std.debug.print("action {s}.{s}: {d} actions have this name, want exactly 1\n", .{ @tagName(context), name, found });
-            return err;
+/// The action named `name` in `context`, if exactly one is.
+fn onlyNamed(context: Context, name: []const u8) ?Action {
+    var found: ?Action = null;
+    for (actions) |a| if (a.context() == context and std.mem.eql(u8, a.name, name)) {
+        if (found != null) return null;
+        found = a;
+    };
+    return found;
+}
+
+fn expectPinned() !void {
+    for (pinned) |pin| {
+        const name, const does = pin;
+        const context: Context = does;
+        const a = onlyNamed(context, name) orelse {
+            std.debug.print("action {s}.{s}: no action or several have this name, want exactly 1\n", .{ @tagName(context), name });
+            return error.TestUnexpectedResult;
         };
+        if (!std.meta.eql(a.does, does)) {
+            std.debug.print("action {s}.{s} runs {any}, pinned to {any}\n", .{ @tagName(context), name, a.does, does });
+            return error.TestUnexpectedResult;
+        }
     }
     for (actions) |a| {
-        if (a.context() != context) continue;
-        for (pinned) |name| {
-            if (std.mem.eql(u8, a.name, name)) break;
+        for (pinned) |pin| {
+            const name, const does = pin;
+            if (a.context() == @as(Context, does) and std.mem.eql(u8, a.name, name)) break;
         } else {
-            std.debug.print("action {s}.{s} isn't pinned: add its name to `pinned_names`\n", .{ @tagName(context), a.name });
+            std.debug.print("action {s}.{s} isn't pinned: add it to `pinned`\n", .{ @tagName(a.context()), a.name });
             return error.TestUnexpectedResult;
         }
     }
@@ -501,93 +555,93 @@ fn expectBinding(context: Context, k: Key, want: ?[]const u8) !void {
     return error.TestUnexpectedResult;
 }
 
-test "default keys are today's" {
+test "the default keys and the actions they run" {
     const B = struct { Key, []const u8 };
-    // Every key the keymap knew before bindings, outside text input.
+    // Outside text input.
     for ([_]B{
-        .{ ch('j'), "move_down" },            .{ named(.down), "move_down" },          .{ ctl('n'), "move_down" },
-        .{ ch('k'), "move_up" },              .{ named(.up), "move_up" },              .{ ctl('p'), "move_up" },
-        .{ ch('g'), "top" },                  .{ named(.home), "top" },                .{ ch('G'), "bottom" },
-        .{ named(.end), "bottom" },           .{ named(.page_down), "page_down" },     .{ named(.page_up), "page_up" },
-        .{ ctl('d'), "half_page_down" },      .{ ctl('u'), "half_page_up" },           .{ named(.tab), "focus_next" },
-        .{ shifted(.tab), "focus_previous" }, .{ ch('h'), "focus_left" },              .{ ch('l'), "focus_right" },
-        .{ named(.enter), "open" },           .{ named(.esc), "back" },                .{ named(.backspace), "back" },
-        .{ ctl('f'), "filter" },              .{ ch('o'), "go_album" },                .{ ch('O'), "go_artist" },
-        .{ ch('c'), "go_playing" },           .{ ch('1'), "section_home" },            .{ ch('2'), "section_recent" },
-        .{ ch('3'), "section_songs" },        .{ ch('4'), "section_albums" },          .{ ch('5'), "section_artists" },
-        .{ ch('6'), "section_playlists" },    .{ ch('7'), "section_favorites" },       .{ ch('8'), "section_radio" },
-        .{ ch('9'), "section_charts" },       .{ ch('0'), "section_queue" },           .{ ch('/'), "search" },
-        .{ ch(' '), "play_pause" },           .{ ch('n'), "next" },                    .{ ch('>'), "next" },
-        .{ ch('p'), "previous" },             .{ ch('<'), "previous" },                .{ named(.left), "seek_back_5" },
-        .{ named(.right), "seek_forward_5" }, .{ ch('['), "seek_back_30" },            .{ shifted(.left), "seek_back_30" },
-        .{ ch(']'), "seek_forward_30" },      .{ shifted(.right), "seek_forward_30" }, .{ ch('+'), "volume_up" },
-        .{ ch('='), "volume_up" },            .{ ch('-'), "volume_down" },             .{ ch('m'), "mute" },
-        .{ ch('s'), "shuffle" },              .{ ch('r'), "repeat" },                  .{ ch('P'), "play_from_top" },
-        .{ ch('e'), "play_later" },           .{ ch('E'), "play_next" },               .{ ch('R'), "station" },
-        .{ ch('d'), "remove" },               .{ named(.delete), "remove" },           .{ ch('f'), "favorite" },
-        .{ ch('F'), "favorite_playing" },     .{ ch('a'), "add_to_library" },          .{ ch('A'), "add_to_playlist" },
-        .{ ch('i'), "details" },              .{ ch('v'), "artwork" },                 .{ ctl('r'), "reload_view" },
-        .{ ctl('l'), "redraw" },              .{ ch('q'), "quit" },                    .{ ch('Q'), "quit_and_stop" },
-        .{ ch('S'), "sign_in" },              .{ ch('?'), "help" },
+        .{ .char('j'), "move_down" },          .{ named(.down), "move_down" },          .{ .ctrlChar('n'), "move_down" },
+        .{ .char('k'), "move_up" },            .{ named(.up), "move_up" },              .{ .ctrlChar('p'), "move_up" },
+        .{ .char('g'), "top" },                .{ named(.home), "top" },                .{ .char('G'), "bottom" },
+        .{ named(.end), "bottom" },            .{ named(.page_down), "page_down" },     .{ named(.page_up), "page_up" },
+        .{ .ctrlChar('d'), "half_page_down" }, .{ .ctrlChar('u'), "half_page_up" },     .{ named(.tab), "focus_next" },
+        .{ shifted(.tab), "focus_previous" },  .{ .char('h'), "focus_left" },           .{ .char('l'), "focus_right" },
+        .{ named(.enter), "open" },            .{ named(.esc), "back" },                .{ named(.backspace), "back" },
+        .{ .ctrlChar('f'), "filter" },         .{ .char('o'), "go_album" },             .{ .char('O'), "go_artist" },
+        .{ .char('c'), "go_playing" },         .{ .char('1'), "section_home" },         .{ .char('2'), "section_recent" },
+        .{ .char('3'), "section_songs" },      .{ .char('4'), "section_albums" },       .{ .char('5'), "section_artists" },
+        .{ .char('6'), "section_playlists" },  .{ .char('7'), "section_favorites" },    .{ .char('8'), "section_radio" },
+        .{ .char('9'), "section_charts" },     .{ .char('0'), "section_queue" },        .{ .char('/'), "search" },
+        .{ .char(' '), "play_pause" },         .{ .char('n'), "next" },                 .{ .char('>'), "next" },
+        .{ .char('p'), "previous" },           .{ .char('<'), "previous" },             .{ named(.left), "seek_back_5" },
+        .{ named(.right), "seek_forward_5" },  .{ .char('['), "seek_back_30" },         .{ shifted(.left), "seek_back_30" },
+        .{ .char(']'), "seek_forward_30" },    .{ shifted(.right), "seek_forward_30" }, .{ .char('+'), "volume_up" },
+        .{ .char('='), "volume_up" },          .{ .char('-'), "volume_down" },          .{ .char('m'), "mute" },
+        .{ .char('s'), "shuffle" },            .{ .char('r'), "repeat" },               .{ .char('P'), "play_from_top" },
+        .{ .char('e'), "play_later" },         .{ .char('E'), "play_next" },            .{ .char('R'), "station" },
+        .{ .char('d'), "remove" },             .{ named(.delete), "remove" },           .{ .char('f'), "favorite" },
+        .{ .char('F'), "favorite_playing" },   .{ .char('a'), "add_to_library" },       .{ .char('A'), "add_to_playlist" },
+        .{ .char('i'), "details" },            .{ .char('v'), "artwork" },              .{ .ctrlChar('r'), "reload_view" },
+        .{ .ctrlChar('l'), "redraw" },         .{ .char('q'), "quit" },                 .{ .char('Q'), "quit_and_stop" },
+        .{ .char('S'), "sign_in" },            .{ .char('?'), "help" },
     }) |b| try expectBinding(.lists, b[0], b[1]);
     // And in search and filter.
     for ([_]B{
-        .{ named(.backspace), "delete_back" }, .{ ctl('u'), "clear" },         .{ named(.enter), "submit" },
+        .{ named(.backspace), "delete_back" }, .{ .ctrlChar('u'), "clear" },   .{ named(.enter), "submit" },
         .{ named(.esc), "leave" },             .{ named(.down), "move_down" }, .{ named(.up), "move_up" },
         .{ named(.tab), "switch_scope" },
     }) |b| try expectBinding(.typing, b[0], b[1]);
 
-    // Keys that did nothing still do nothing.
-    try expectBinding(.lists, ch('x'), null);
+    // Keys with no action.
+    try expectBinding(.lists, .char('x'), null);
     try expectBinding(.lists, named(.{ .f = 1 }), null);
-    try expectBinding(.typing, ch('q'), null);
+    try expectBinding(.typing, .char('q'), null);
     // ^c and ^z are fixed, not bindings.
-    try expectBinding(.lists, ctl('c'), null);
-    try expectBinding(.lists, ctl('z'), null);
-    try expectBinding(.typing, ctl('c'), null);
-    // Recently Added has no key, as before.
+    try expectBinding(.lists, .ctrlChar('c'), null);
+    try expectBinding(.lists, .ctrlChar('z'), null);
+    try expectBinding(.typing, .ctrlChar('c'), null);
+    // Recently Added has no key.
     for (actions) |a| if (std.mem.eql(u8, a.name, "section_recently_added")) try testing.expectEqual(@as(usize, 0), a.defaults.len);
 }
 
 test "keys only some terminals tell apart are read as the shared key" {
     // Ctrl+i is Tab; Ctrl+m, Ctrl+j, Shift+Enter and Ctrl+Enter are Enter; Ctrl+h is Backspace;
     // Ctrl+[ is Esc. Ghostty, kitty and foot send these apart; Terminal.app and tmux don't.
-    try expectBinding(.lists, ctl('i'), "focus_next");
-    try expectBinding(.typing, ctl('i'), "switch_scope");
-    try expectBinding(.lists, ctl('m'), "open");
-    try expectBinding(.lists, ctl('j'), "open");
+    try expectBinding(.lists, .ctrlChar('i'), "focus_next");
+    try expectBinding(.typing, .ctrlChar('i'), "switch_scope");
+    try expectBinding(.lists, .ctrlChar('m'), "open");
+    try expectBinding(.lists, .ctrlChar('j'), "open");
     try expectBinding(.lists, shifted(.enter), "open");
     try expectBinding(.lists, .{ .code = .enter, .ctrl = true }, "open");
     try expectBinding(.lists, .{ .code = .enter, .ctrl = true, .shift = true }, "open");
     try expectBinding(.typing, shifted(.enter), "submit");
-    try expectBinding(.lists, ctl('h'), "back");
-    try expectBinding(.typing, ctl('h'), "delete_back");
-    try expectBinding(.lists, ctl('['), "back");
-    try expectBinding(.typing, ctl('['), "leave");
+    try expectBinding(.lists, .ctrlChar('h'), "back");
+    try expectBinding(.typing, .ctrlChar('h'), "delete_back");
+    try expectBinding(.lists, .ctrlChar('['), "back");
+    try expectBinding(.typing, .ctrlChar('['), "leave");
     // Ctrl+Shift+letter is Ctrl+letter, however the terminal spells it: kitty, modifyOtherKeys,
     // WezTerm.
     try expectBinding(.lists, .{ .code = .{ .char = 'f' }, .ctrl = true, .shift = true }, "filter");
     try expectBinding(.lists, .{ .code = .{ .char = 'F' }, .ctrl = true, .shift = true }, "filter");
-    try expectBinding(.lists, ctl('F'), "filter");
+    try expectBinding(.lists, .ctrlChar('F'), "filter");
     try expectBinding(.lists, .{ .code = .{ .char = 'I' }, .ctrl = true, .shift = true }, "focus_next");
     // Shift+Space is Space; Shift+character is the shifted character.
     try expectBinding(.lists, .{ .code = .{ .char = ' ' }, .shift = true }, "play_pause");
     try expectBinding(.lists, .{ .code = .{ .char = 'a' }, .shift = true }, "add_to_playlist");
     try expectBinding(.lists, .{ .code = .{ .char = 'A' }, .shift = true }, "add_to_playlist");
 
-    // A fold keeps the other modifiers, as the old encoding sends them.
+    // A fold keeps the other modifiers, as terminals without a keyboard protocol send them.
     try testing.expect(fold(.{ .code = .{ .char = 'i' }, .ctrl = true, .alt = true }).eql(.{ .code = .tab, .alt = true }));
     try testing.expect(fold(.{ .code = .{ .char = 'a' }, .alt = true, .shift = true }).eql(.{ .code = .{ .char = 'A' }, .alt = true }));
     try testing.expect(fold(.{ .code = .enter, .alt = true, .shift = true }).eql(.{ .code = .enter, .alt = true }));
-    try testing.expect(fold(.{ .code = .{ .char = 0xfc }, .shift = true }).eql(ch(0xdc))); // ü
+    try testing.expect(fold(.{ .code = .{ .char = 0xfc }, .shift = true }).eql(.char(0xdc))); // ü
     // Shift stays on named keys other than Enter, and Ctrl on other characters.
     try testing.expect(fold(shifted(.up)).eql(shifted(.up)));
     try testing.expect(fold(shifted(.tab)).eql(shifted(.tab)));
-    try testing.expect(fold(ctl(' ')).eql(ctl(' ')));
+    try testing.expect(fold(.ctrlChar(' ')).eql(.ctrlChar(' ')));
 }
 
 test "a binding matches the whole key: Alt+j and Shift+↑ are keys of their own" {
-    try expectBinding(.lists, ch('j'), "move_down");
+    try expectBinding(.lists, .char('j'), "move_down");
     try expectBinding(.lists, .{ .code = .{ .char = 'j' }, .alt = true }, null);
     try expectBinding(.lists, named(.up), "move_up");
     try expectBinding(.lists, shifted(.up), null);
@@ -616,15 +670,14 @@ test "the defaults are folded keys, one action each, never ^c or ^z or a typing 
 }
 
 test "^c quits and ^z suspends, outside the bindings" {
-    try testing.expectEqual(Fixed.quit, fixed(ctl('c')).?);
-    try testing.expectEqual(Fixed.suspend_process, fixed(ctl('z')).?);
+    try testing.expectEqual(Fixed.quit, fixed(.ctrlChar('c')).?);
+    try testing.expectEqual(Fixed.suspend_process, fixed(.ctrlChar('z')).?);
     try testing.expectEqual(Fixed.quit, fixed(.{ .code = .{ .char = 'c' }, .ctrl = true, .shift = true }).?);
     try testing.expect(fixed(.{ .code = .{ .char = 'c' }, .ctrl = true, .alt = true }) == null);
-    try testing.expect(fixed(ch('c')) == null);
-    try testing.expect(fixed(ch('q')) == null);
+    try testing.expect(fixed(.char('c')) == null);
+    try testing.expect(fixed(.char('q')) == null);
 }
 
-test "action names are fixed: none is renamed or removed, and every action is pinned" {
-    try expectNamesPinned(.lists, &pinned_names.lists);
-    try expectNamesPinned(.typing, &pinned_names.typing);
+test "action names are fixed: none is renamed, removed or repointed, and every action is pinned" {
+    try expectPinned();
 }

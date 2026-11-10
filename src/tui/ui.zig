@@ -385,7 +385,7 @@ pub const Ui = struct {
     }
 
     /// A key from the main UI. `^c` quits from anywhere; in a text field a character types
-    /// itself; any other key runs its binding in the current context, if it has one.
+    /// itself; any other key runs the action it's bound to in the current context, if any.
     pub fn key(u: *Ui, k: Key, now_ms: i64) void {
         if (keys.fixed(k) == .quit) return u.emit(.{ .quit = .{ .stop = false } });
         if (u.textMode()) {
