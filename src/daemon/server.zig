@@ -1,8 +1,9 @@
 //! The background process's local HTTP server. One server carries two kinds of client:
 //!
-//! - the engine page, with the Node POC's routes unchanged: `/claim`, `/events` (SSE),
-//!   `POST /report`, `POST /result`, `/developer-token`, `GET`/`POST /user-token` and its own
-//!   static files. The token `GET`s, like `/events`, need the current launch's `?engine=` nonce;
+//! - the engine page, with the Node POC's routes: `/claim`, `/events` (SSE), `/reports` (a
+//!   WebSocket that carries its reports), `POST /result`, `/developer-token`, `GET`/`POST
+//!   /user-token` and its own static files. The token `GET`s, like `/events` and `/reports`,
+//!   need the current launch's `?engine=` nonce;
 //! - the `am` CLI, under `/cli/`, authenticated with the daemon secret.
 //!
 //! Every request must pass the Host check and, if it has one, the Origin check (see `guard.zig`).
@@ -26,7 +27,8 @@ const app_js = @embedFile("web/app.js");
 /// engine page shows up as a failed write (std.http.Server has no timeouts of its own).
 pub const ping_interval: Io.Duration = .fromSeconds(15);
 
-/// Request bodies are reports, results and tokens: a few KiB.
+/// Request bodies (results and tokens) and the report socket's messages. A report is a few KiB,
+/// and more with long queue items or events: past the connection's 16 KiB buffer at times.
 const max_body = 1 << 20;
 
 pub const Response = struct {
@@ -85,7 +87,8 @@ pub const Backend = struct {
 pub const Route = union(enum) {
     claim: ?[]const u8,
     events: ?[]const u8,
-    report,
+    /// The report socket: holds the `?engine=` nonce, like `events`.
+    reports: ?[]const u8,
     result,
     /// Holds the `?engine=` nonce, like `user_token_get`: only the current page gets tokens.
     developer_token: ?[]const u8,
@@ -98,7 +101,8 @@ pub const Route = union(enum) {
     not_found,
 };
 
-/// Maps a request line to a route. `?engine=<nonce>` rides along on `/claim` and `/events`.
+/// Maps a request line to a route. `?engine=<nonce>` rides along on `/claim`, `/events`,
+/// `/reports` and the token routes.
 pub fn route(method: std.http.Method, target: []const u8) Route {
     const query_start = std.mem.findScalar(u8, target, '?');
     const path = target[0 .. query_start orelse target.len];
@@ -106,7 +110,7 @@ pub fn route(method: std.http.Method, target: []const u8) Route {
     if (std.mem.startsWith(u8, path, "/cli/")) return .{ .cli = path["/cli/".len..] };
     if (eql(path, "/claim")) return .{ .claim = queryParam(query, "engine") };
     if (eql(path, "/events")) return .{ .events = queryParam(query, "engine") };
-    if (eql(path, "/report") and method == .POST) return .report;
+    if (eql(path, "/reports")) return .{ .reports = queryParam(query, "engine") };
     if (eql(path, "/result") and method == .POST) return .result;
     if (eql(path, "/developer-token")) return .{ .developer_token = queryParam(query, "engine") };
     if (eql(path, "/user-token")) return if (method == .POST) .{ .user_token_post = queryParam(query, "engine") } else .{ .user_token_get = queryParam(query, "engine") };
@@ -233,14 +237,7 @@ pub const Server = struct {
         switch (route(method, request.head.target)) {
             .claim => |nonce| return respond(request, .{ .status = if (s.channel.claim(nonce)) .no_content else .conflict }),
             .events => |nonce| return s.streamEvents(arena, request, nonce),
-            .report => {
-                const body = try readBody(arena, request);
-                return respond(request, switch (try s.channel.postReport(body)) {
-                    .accepted => .{ .status = .no_content },
-                    .stale => .{ .status = .conflict },
-                    .invalid => .text(.bad_request, "bad report\n"),
-                });
-            },
+            .reports => |nonce| return s.readReports(request, nonce),
             .result => {
                 const body = try readBody(arena, request);
                 return respond(request, switch (try s.channel.postResult(body)) {
@@ -325,7 +322,106 @@ pub const Server = struct {
             try flushEvent(&body);
         }
     }
+
+    /// `GET /reports`: the engine page's report socket, for the current launch's page only. Each
+    /// message is a report for the channel, until the page closes the socket or reports for a
+    /// launch that is over.
+    fn readReports(s: *Server, request: *std.http.Server.Request, nonce: ?[]const u8) !void {
+        const key = switch (request.upgradeRequested()) {
+            .websocket => |key| key orelse return respond(request, .text(.bad_request, "no Sec-WebSocket-Key\n")),
+            .other, .none => return respond(request, .text(.upgrade_required, "WebSocket only\n")),
+        };
+        if (!s.channel.claim(nonce)) return respond(request, .{ .status = .conflict });
+        var socket = try request.respondWebSocket(.{ .key = key });
+        try socket.flush();
+        var message: std.ArrayList(u8) = .empty;
+        defer message.deinit(s.gpa);
+        while (try readMessage(&socket, s.gpa, &message)) |report| switch (try s.channel.postReport(report)) {
+            .accepted, .invalid => {},
+            // The page's next report asks for a new socket, which a page of an old launch doesn't get.
+            .stale => return closeStale(&socket),
+        };
+    }
 };
+
+const WebSocket = std.http.Server.WebSocket;
+
+/// Reads the next text or binary message into `message`, answering pings on the way, and returns
+/// it; null once the page has closed the socket (answered with a close of our own). Unlike
+/// `WebSocket.readSmallMessage`, it takes a message larger than the connection's buffer (up to
+/// `max_body`, as a POST body), and one in fragments.
+fn readMessage(socket: *WebSocket, gpa: Allocator, message: *std.ArrayList(u8)) !?[]const u8 {
+    const in = socket.input;
+    message.clearRetainingCapacity();
+    var fragmented = false;
+    var control: [125]u8 = undefined;
+    while (true) {
+        const frame = try readFrameHead(in);
+        switch (frame.opcode) {
+            .text, .binary, .continuation => {
+                // A continuation only within a message, and a new message only between them.
+                if ((frame.opcode == .continuation) != fragmented) return error.UnexpectedOpCode;
+                if (frame.len > max_body - message.items.len) return error.MessageOversize;
+                const payload = try message.addManyAsSlice(gpa, @intCast(frame.len));
+                try in.readSliceAll(payload);
+                unmask(payload, frame.mask);
+                if (frame.fin) return message.items;
+                fragmented = true;
+            },
+            .ping => try socket.writeMessage(try readControl(in, frame, &control), .pong),
+            .pong => _ = try readControl(in, frame, &control),
+            .connection_close => {
+                const payload = try readControl(in, frame, &control);
+                // With the page's status code back, as RFC 6455 asks.
+                try socket.writeMessage(payload[0..@min(payload.len, 2)], .connection_close);
+                return null;
+            },
+            _ => return error.UnexpectedOpCode,
+        }
+    }
+}
+
+/// A frame up to its payload.
+const FrameHead = struct {
+    fin: bool,
+    opcode: WebSocket.Opcode,
+    len: u64,
+    mask: [4]u8,
+};
+
+fn readFrameHead(in: *Io.Reader) !FrameHead {
+    const header = (try in.takeArray(2)).*;
+    const h0: WebSocket.Header0 = @bitCast(header[0]);
+    const h1: WebSocket.Header1 = @bitCast(header[1]);
+    // A browser masks every frame it sends.
+    if (!h1.mask) return error.MissingMaskBit;
+    const len: u64 = switch (h1.payload_len) {
+        .len16 => try in.takeInt(u16, .big),
+        .len64 => try in.takeInt(u64, .big),
+        else => @backingInt(h1.payload_len),
+    };
+    return .{ .fin = h0.fin, .opcode = h0.opcode, .len = len, .mask = (try in.takeArray(4)).* };
+}
+
+/// A control frame's payload, read into `buffer`. Control frames come whole, with at most 125 bytes.
+fn readControl(in: *Io.Reader, frame: FrameHead, buffer: *[125]u8) ![]u8 {
+    if (!frame.fin or frame.len > buffer.len) return error.InvalidControlFrame;
+    const payload = buffer[0..@intCast(frame.len)];
+    try in.readSliceAll(payload);
+    unmask(payload, frame.mask);
+    return payload;
+}
+
+fn unmask(payload: []u8, mask: [4]u8) void {
+    for (payload, 0..) |*b, i| b.* ^= mask[i % 4];
+}
+
+/// Closes a report socket whose launch is over, with 1008 (policy violation).
+fn closeStale(socket: *WebSocket) !void {
+    var payload: [2]u8 = undefined;
+    std.mem.writeInt(u16, &payload, 1008, .big);
+    try socket.writeMessage(&payload, .connection_close);
+}
 
 /// Sets `gone` once the CLI closes its end of the connection, which ends the read. The CLI sends
 /// nothing after its request (`Connection: close`), so stray bytes are dropped. Runs until
@@ -376,8 +472,10 @@ test "requests map to the POC's routes, with the nonce from the query" {
     try testing.expectEqualDeep(Route{ .claim = "abc" }, route(.GET, "/claim?engine=abc"));
     try testing.expectEqualDeep(Route{ .claim = null }, route(.GET, "/claim"));
     try testing.expectEqualDeep(Route{ .events = "abc" }, route(.GET, "/events?x=1&engine=abc"));
-    try testing.expectEqual(Route.report, route(.POST, "/report"));
-    try testing.expectEqual(Route.not_found, route(.GET, "/report"));
+    try testing.expectEqualDeep(Route{ .reports = "abc" }, route(.GET, "/reports?engine=abc"));
+    try testing.expectEqualDeep(Route{ .reports = null }, route(.GET, "/reports"));
+    // Reports come over the socket only.
+    try testing.expectEqual(Route.not_found, route(.POST, "/report"));
     try testing.expectEqual(Route.result, route(.POST, "/result"));
     try testing.expectEqualDeep(Route{ .developer_token = "abc" }, route(.GET, "/developer-token?engine=abc"));
     try testing.expectEqualDeep(Route{ .developer_token = null }, route(.GET, "/developer-token"));
@@ -454,16 +552,26 @@ const TestServer = struct {
         t.channel.deinit();
     }
 
+    /// `request` with `PORT` in it replaced by the server's port. Allocated with the testing
+    /// allocator.
+    fn withPort(t: *TestServer, request: []const u8) ![]u8 {
+        var port_text: [5]u8 = undefined;
+        const port = try std.mem.print(&port_text, "{d}", .{t.server.port});
+        return std.mem.replaceOwned(u8, testing.allocator, request, "PORT", port);
+    }
+
+    fn connect(t: *TestServer) !net.Stream {
+        const address: net.IpAddress = .{ .ip4 = .loopback(t.server.port) };
+        return address.connect(testing.io, .{ .mode = .stream });
+    }
+
     /// Sends one request (`PORT` in it becomes the server's port) and returns the whole
     /// response. Allocated with the testing allocator.
     fn send(t: *TestServer, request: []const u8) ![]u8 {
         const io = testing.io;
-        var port_text: [5]u8 = undefined;
-        const port = try std.mem.print(&port_text, "{d}", .{t.server.port});
-        const bytes = try std.mem.replaceOwned(u8, testing.allocator, request, "PORT", port);
+        const bytes = try t.withPort(request);
         defer testing.allocator.free(bytes);
-        const address: net.IpAddress = .{ .ip4 = .loopback(t.server.port) };
-        const stream = try address.connect(io, .{ .mode = .stream });
+        const stream = try t.connect();
         defer stream.close(io);
         var write_buffer: [1024]u8 = undefined;
         var w = stream.writer(io, &write_buffer);
@@ -532,23 +640,21 @@ test "a CLI request names its client with X-AM-Client; an empty one names none" 
     try testing.expectEqual(null, t.fake.client);
 }
 
-test "a foreign Origin gets 403 on the token, report and result routes; the page's own works" {
+test "a foreign Origin gets 403 on the token and result routes and the report socket; the page's own works" {
     var t: TestServer = undefined;
     try t.start();
     defer t.stop();
     const nonce = "cccccccccccccccccccccccccccccccc";
     t.channel.setNonce(nonce.*);
-    const report = "{\"engine\":\"" ++ nonce ++ "\"}";
 
     try testing.expectEqual(@as(u16, 403), try t.status("POST /user-token HTTP/1.1\r\nHost: localhost:PORT\r\nOrigin: https://evil.example\r\nContent-Length: 13\r\nConnection: close\r\n\r\n{\"token\":\"x\"}"));
-    try testing.expectEqual(@as(u16, 403), try t.status("POST /report HTTP/1.1\r\nHost: localhost:PORT\r\nOrigin: https://evil.example\r\nContent-Length: 45\r\nConnection: close\r\n\r\n" ++ report));
+    try testing.expectEqual(@as(u16, 403), try t.status(upgradeRequest("/reports?engine=" ++ nonce, "Origin: https://evil.example\r\nConnection: close\r\n")));
     try testing.expectEqual(@as(u16, 403), try t.status("POST /result HTTP/1.1\r\nHost: localhost:PORT\r\nOrigin: https://evil.example\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"));
-    try testing.expectEqual(null, try t.channel.lastReport(testing.allocator));
 
     try testing.expectEqual(@as(u16, 200), try t.status("POST /user-token?engine=" ++ nonce ++ " HTTP/1.1\r\nHost: localhost:PORT\r\nOrigin: http://localhost:PORT\r\nContent-Length: 13\r\nConnection: close\r\n\r\n{\"token\":\"x\"}"));
-    try testing.expectEqual(@as(u16, 204), try t.status("POST /report HTTP/1.1\r\nHost: localhost:PORT\r\nOrigin: http://localhost:PORT\r\nContent-Length: 45\r\nConnection: close\r\n\r\n" ++ report));
-    const last = (try t.channel.lastReport(testing.allocator)).?;
-    testing.allocator.free(last.json);
+    var socket: TestSocket = undefined;
+    try testing.expectEqual(@as(u16, 101), try socket.open(&t, nonce, "http://localhost:PORT"));
+    socket.close();
 }
 
 test "the token routes answer only the current engine page" {
@@ -591,21 +697,21 @@ test "the sign-in page's nonce gets the developer token and may post a token, bu
     try testing.expectEqual(@as(u16, 403), try t.status("GET /developer-token?engine=" ++ signin ++ " HTTP/1.1\r\nHost: localhost:PORT\r\nConnection: close\r\n\r\n"));
 }
 
-test "claim and events answer 409 to a stale nonce" {
+test "claim, events and the report socket answer 409 to a stale nonce" {
     var t: TestServer = undefined;
     try t.start();
     defer t.stop();
     t.channel.setNonce("dddddddddddddddddddddddddddddddd".*);
     try testing.expectEqual(@as(u16, 409), try t.status("GET /claim?engine=stale HTTP/1.1\r\nHost: localhost:PORT\r\nConnection: close\r\n\r\n"));
     try testing.expectEqual(@as(u16, 409), try t.status("GET /events?engine=stale HTTP/1.1\r\nHost: localhost:PORT\r\nConnection: close\r\n\r\n"));
-    try testing.expectEqual(@as(u16, 409), try t.status("POST /report HTTP/1.1\r\nHost: localhost:PORT\r\nContent-Length: 18\r\nConnection: close\r\n\r\n{\"engine\":\"stale\"}"));
+    try testing.expectEqual(@as(u16, 409), try t.status(upgradeRequest("/reports?engine=stale", "Connection: close\r\n")));
+    try testing.expectEqual(@as(u16, 409), try t.status(upgradeRequest("/reports", "Connection: close\r\n")));
     try testing.expectEqual(@as(u16, 204), try t.status("GET /claim?engine=dddddddddddddddddddddddddddddddd HTTP/1.1\r\nHost: localhost:PORT\r\nConnection: close\r\n\r\n"));
 }
 
 fn readEvents(t: *TestServer, out: *[2048]u8) !usize {
     const io = testing.io;
-    const address: net.IpAddress = .{ .ip4 = .loopback(t.server.port) };
-    const stream = try address.connect(io, .{ .mode = .stream });
+    const stream = try t.connect();
     defer stream.close(io);
     var write_buffer: [512]u8 = undefined;
     var w = stream.writer(io, &write_buffer);
@@ -640,4 +746,191 @@ test "the event stream carries commands to the page as SSE data lines" {
     try testing.expect(std.ascii.findIgnoreCase(response, "content-type: text/event-stream\r\n") != null);
     try testing.expect(std.mem.find(u8, response, ": connected\n\n") != null);
     try testing.expect(std.mem.find(u8, response, "data: {\"id\":1,\"method\":\"snapshot\",\"args\":[]}\n\n") != null);
+}
+
+/// RFC 6455's example key, and the accept value it must be answered with.
+const ws_key = "dGhlIHNhbXBsZSBub25jZQ==";
+const ws_accept = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+
+/// A browser's upgrade to a WebSocket at `target`, with these header lines too.
+fn upgradeRequest(comptime target: []const u8, comptime headers: []const u8) []const u8 {
+    return "GET " ++ target ++ " HTTP/1.1\r\nHost: localhost:PORT\r\nUpgrade: websocket\r\nSec-WebSocket-Key: " ++ ws_key ++ "\r\nSec-WebSocket-Version: 13\r\n" ++ headers ++ "\r\n";
+}
+
+/// The page's end of the report socket: it sends masked frames, as a browser must, and reads the
+/// server's. Opened in place (`open`), since its reader and writer point into it.
+const TestSocket = struct {
+    stream: net.Stream,
+    reader: net.Stream.Reader,
+    writer: net.Stream.Writer,
+    read_buffer: [4096]u8,
+    write_buffer: [4096]u8,
+    head_buffer: [512]u8,
+    /// The response head, once `open` has read it.
+    head: []const u8,
+
+    const Opcode = WebSocket.Opcode;
+
+    /// Asks for the report socket with this nonce and Origin (`PORT` in it becomes the server's
+    /// port) and returns the response's status. On 101 the socket is open.
+    fn open(ws: *TestSocket, t: *TestServer, comptime nonce: []const u8, comptime origin: []const u8) !u16 {
+        const io = testing.io;
+        ws.stream = try t.connect();
+        errdefer ws.stream.close(io);
+        ws.reader = ws.stream.reader(io, &ws.read_buffer);
+        ws.writer = ws.stream.writer(io, &ws.write_buffer);
+        const request = try t.withPort(upgradeRequest("/reports?engine=" ++ nonce, "Connection: Upgrade\r\nOrigin: " ++ origin ++ "\r\n"));
+        defer testing.allocator.free(request);
+        try ws.writer.interface.writeAll(request);
+        try ws.writer.interface.flush();
+        var len: usize = 0;
+        while (!std.mem.endsWith(u8, ws.head_buffer[0..len], "\r\n\r\n")) : (len += 1) ws.head_buffer[len] = try ws.reader.interface.takeByte();
+        ws.head = ws.head_buffer[0..len];
+        return std.fmt.parseInt(u16, ws.head["HTTP/1.1 ".len..][0..3], 10);
+    }
+
+    fn close(ws: *TestSocket) void {
+        ws.stream.close(testing.io);
+    }
+
+    /// One frame, masked.
+    fn send(ws: *TestSocket, opcode: Opcode, fin: bool, payload: []const u8) !void {
+        const w = &ws.writer.interface;
+        try w.writeByte(@as(u8, if (fin) 0x80 else 0) | @backingInt(opcode));
+        if (payload.len < 126) {
+            try w.writeByte(0x80 | @as(u8, @intCast(payload.len)));
+        } else if (payload.len <= 0xffff) {
+            try w.writeByte(0x80 | 126);
+            try w.writeInt(u16, @intCast(payload.len), .big);
+        } else {
+            try w.writeByte(0x80 | 127);
+            try w.writeInt(u64, payload.len, .big);
+        }
+        const mask = [4]u8{ 0x37, 0xfa, 0x21, 0x3d };
+        try w.writeAll(&mask);
+        for (payload, 0..) |b, i| try w.writeByte(b ^ mask[i % 4]);
+        try w.flush();
+    }
+
+    const Frame = struct {
+        opcode: Opcode,
+        /// Allocated with the testing allocator.
+        payload: []u8,
+    };
+
+    /// The server's next frame, which must not be masked or fragmented.
+    fn receive(ws: *TestSocket) !Frame {
+        const r = &ws.reader.interface;
+        const b0 = try r.takeByte();
+        const b1 = try r.takeByte();
+        try testing.expect(b0 & 0x80 != 0);
+        try testing.expect(b1 & 0x80 == 0);
+        const len: usize = switch (b1 & 0x7f) {
+            126 => try r.takeInt(u16, .big),
+            127 => @intCast(try r.takeInt(u64, .big)),
+            else => |n| n,
+        };
+        const payload = try testing.allocator.alloc(u8, len);
+        errdefer testing.allocator.free(payload);
+        try r.readSliceAll(payload);
+        return .{ .opcode = @fromBackingInt(@as(u4, @truncate(b0))), .payload = payload };
+    }
+
+    /// Whether the server has closed the connection.
+    fn ended(ws: *TestSocket) bool {
+        _ = ws.reader.interface.takeByte() catch |e| return e == error.EndOfStream;
+        return false;
+    }
+};
+
+/// Waits up to two seconds for the channel's last report to be `json`.
+fn expectReport(t: *TestServer, json: []const u8) !void {
+    var seen = try t.channel.waitChange(null, .zero);
+    for (0..100) |_| {
+        if (try t.channel.lastReport(testing.allocator)) |last| {
+            defer testing.allocator.free(last.json);
+            if (eql(last.json, json)) return;
+        }
+        seen = try t.channel.waitChange(seen, .fromMilliseconds(20));
+    }
+    const last = try t.channel.lastReport(testing.allocator);
+    defer if (last) |l| testing.allocator.free(l.json);
+    std.debug.print("the last report: {?s}\n", .{if (last) |l| l.json[0..@min(l.json.len, 200)] else null});
+    return error.TestExpectedReport;
+}
+
+test "each message on the report socket reaches the channel as a report, however it is framed" {
+    var t: TestServer = undefined;
+    try t.start();
+    defer t.stop();
+    const nonce = "abababababababababababababababab";
+    t.channel.setNonce(nonce.*);
+    var socket: TestSocket = undefined;
+    try testing.expectEqual(@as(u16, 101), try socket.open(&t, nonce, "http://localhost:PORT"));
+    defer socket.close();
+    try testing.expect(std.ascii.findIgnoreCase(socket.head, "sec-websocket-accept: " ++ ws_accept ++ "\r\n") != null);
+    try testing.expect(std.ascii.findIgnoreCase(socket.head, "access-control-allow") == null);
+
+    const first = "{\"engine\":\"" ++ nonce ++ "\",\"n\":1}";
+    try socket.send(.text, true, first);
+    try expectReport(&t, first);
+
+    // Larger than the connection's buffer, as a report with long queue items and events can be.
+    const pad: [70_000]u8 = @splat('x');
+    const large = try std.mem.concat(testing.allocator, u8, &.{ "{\"engine\":\"" ++ nonce ++ "\",\"pad\":\"", &pad, "\"}" });
+    defer testing.allocator.free(large);
+    try socket.send(.text, true, large);
+    try expectReport(&t, large);
+
+    // In fragments, with a ping between them, which gets its pong.
+    try socket.send(.text, false, "{\"engine\":\"");
+    try socket.send(.ping, true, "hi");
+    try socket.send(.continuation, false, nonce);
+    try socket.send(.continuation, true, "\",\"n\":3}");
+    const pong = try socket.receive();
+    defer testing.allocator.free(pong.payload);
+    try testing.expectEqual(TestSocket.Opcode.pong, pong.opcode);
+    try testing.expectEqualStrings("hi", pong.payload);
+    try expectReport(&t, "{\"engine\":\"" ++ nonce ++ "\",\"n\":3}");
+
+    // One that isn't JSON is dropped, and the socket stays open.
+    try socket.send(.text, true, "not json");
+    const fourth = "{\"engine\":\"" ++ nonce ++ "\",\"n\":4}";
+    try socket.send(.text, true, fourth);
+    try expectReport(&t, fourth);
+
+    // The page closing it gets the close back, then the connection ends.
+    try socket.send(.connection_close, true, &.{ 0x03, 0xe8 });
+    const close = try socket.receive();
+    defer testing.allocator.free(close.payload);
+    try testing.expectEqual(TestSocket.Opcode.connection_close, close.opcode);
+    try testing.expectEqualSlices(u8, &.{ 0x03, 0xe8 }, close.payload);
+    try testing.expect(socket.ended());
+}
+
+test "the report socket is a WebSocket only: a plain request for it gets 426" {
+    var t: TestServer = undefined;
+    try t.start();
+    defer t.stop();
+    t.channel.setNonce("abababababababababababababababab".*);
+    try testing.expectEqual(@as(u16, 426), try t.status("GET /reports?engine=abababababababababababababababab HTTP/1.1\r\nHost: localhost:PORT\r\nConnection: close\r\n\r\n"));
+}
+
+test "a report for a launch that is over closes the report socket" {
+    var t: TestServer = undefined;
+    try t.start();
+    defer t.stop();
+    const nonce = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+    t.channel.setNonce(nonce.*);
+    var socket: TestSocket = undefined;
+    try testing.expectEqual(@as(u16, 101), try socket.open(&t, nonce, "http://localhost:PORT"));
+    defer socket.close();
+
+    t.channel.setNonce("efefefefefefefefefefefefefefefef".*);
+    try socket.send(.text, true, "{\"engine\":\"" ++ nonce ++ "\"}");
+    const close = try socket.receive();
+    defer testing.allocator.free(close.payload);
+    try testing.expectEqual(TestSocket.Opcode.connection_close, close.opcode);
+    try testing.expect(socket.ended());
+    try testing.expectEqual(null, try t.channel.lastReport(testing.allocator));
 }

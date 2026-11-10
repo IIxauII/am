@@ -363,10 +363,12 @@ pub fn status(host: Host, r: *Reply) Reply.Error!void {
 
     if (state.engine) |e| {
         const what = if (e.signin_window) " sign-in window" else if (e.headless) " (headless)" else "";
-        // As the engine's idle close counts it (`Daemon.superviseEngine`).
+        // As the engine's idle close counts it (`Daemon.superviseEngine`); playing wins.
         const playing = if (report) |rep| rep.music().keepsEngineOpen() else false;
         if (playing)
             try r.print("engine: {s}{s}, pid {d}; stays open while playing\n", .{ e.kind, what, e.pid })
+        else if (e.keep_engine_requests > 0)
+            try r.print("engine: {s}{s}, pid {d}; kept open by keep-alive while a TUI is open\n", .{ e.kind, what, e.pid })
         else
             try r.print("engine: {s}{s}, pid {d}; closes in {f} unless something plays\n", .{ e.kind, what, e.pid, playback.Time{ .seconds = @floatFromInt(e.idle_close_in_s) } });
     } else try r.print("engine: not running\n", .{});
@@ -1331,6 +1333,35 @@ test "status with the engine stopped, and paused with the idle close counting an
     try rig.fp.reportNow();
     const l = try runControl(&ph, null);
     try testing.expect(std.mem.find(u8, l.out, "\nengine: firefox (headless), pid 4243; closes in 5:00 unless something plays\n") != null);
+}
+
+test "status while keep-alive holds an engine that isn't playing says so in place of the countdown; music that plays still stays open while playing" {
+    var rig: Rig = undefined;
+    rig.init(Rig.timing);
+    defer rig.deinit();
+    var ph: PageHost = .{ .rig = &rig, .keep_engine_requests = 1 };
+    try holds(&ph, shy_away_at.paused(62));
+    const paused = try runControl(&ph, null);
+    try testing.expect(std.mem.find(u8, paused.out, "\nengine: firefox (headless), pid 4243; kept open by keep-alive while a TUI is open\n") != null);
+
+    // Nothing loaded: the same.
+    rig.fp.set(.none, false);
+    try rig.fp.reportNow();
+    const idle = try runControl(&ph, null);
+    try testing.expect(std.mem.find(u8, idle.out, "\nengine: firefox (headless), pid 4243; kept open by keep-alive while a TUI is open\n") != null);
+
+    // Playing wins.
+    rig.fp.setHolding(shy_away_at.playing(70));
+    try rig.fp.reportNow();
+    const playing = try runControl(&ph, null);
+    try testing.expect(std.mem.find(u8, playing.out, "\nengine: firefox (headless), pid 4243; stays open while playing\n") != null);
+
+    // Once none holds it, the countdown is back.
+    ph.keep_engine_requests = 0;
+    rig.fp.setHolding(shy_away_at.paused(75));
+    try rig.fp.reportNow();
+    const released = try runControl(&ph, null);
+    try testing.expect(std.mem.find(u8, released.out, "\nengine: firefox (headless), pid 4243; closes in 5:00 unless something plays\n") != null);
 }
 
 test "a stop or pause during a reload answers at once, with no page call: the play waiting on the reload is cancelled and never plays" {

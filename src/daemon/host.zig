@@ -240,6 +240,9 @@ pub const EngineState = struct {
     signin_window: bool,
     /// Seconds until the idle close, if nothing plays meanwhile.
     idle_close_in_s: i64,
+    /// The keep-engine requests holding it open (`Requests.keepers`): while there is one, the
+    /// idle close waits. Always 0 for a sign-in window, which keep-alive doesn't hold.
+    keep_engine_requests: u32 = 0,
 };
 
 /// One cancel generation for every play, from the daemon to the engine page. A play (`am play`,

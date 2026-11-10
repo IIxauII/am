@@ -117,7 +117,8 @@ A setting applies when the process that uses it starts:
   `ENGINE_HEADLESS`, `FIREFOX_WIDEVINE`, `FIREFOX_PATH`, `CHROME_PATH`, `TEAM_ID`, `KEY_ID` and
   `TOKEN_URL` once. After changing one, run `am daemon stop`; the next command starts it again.
 - The TUI reads `AM_IMAGES` and `AM_TUI_LOG` when it opens, and `TEAM_ID`, `KEY_ID` and
-  `TOKEN_URL` each time it checks the tokens.
+  `TOKEN_URL` each time it checks the tokens. Its own settings are in `settings.json`
+  (section 5a).
 - Every other `am` command (`am token`, `am search` …) reads `AM_PORT`, `TEAM_ID`, `KEY_ID` and
   `TOKEN_URL` each time it runs.
 
@@ -170,14 +171,50 @@ keys.
   exits with it unless a TUI is still open or a command ran within those minutes. The next
   command starts it again.
 
-- `AM_IMAGES=kitty|placeholders|placements|blocks|off` picks how artwork is drawn (default: kitty
-  graphics where the terminal answers the query, else half blocks). `v` cycles it while running.
+- `v` cycles the artwork, images → blocks → off, and saves the pick in `settings.json` (5a), so
+  the next start uses it.
 - `AM_TUI_LOG=<file>` writes what the TUI does (failed requests, never tokens) to a file, emptied
   each time the TUI opens. In `~/.config/am/env` it must be an absolute path or start with `~/`.
 - The volume, the last thing played and where it was are kept in `~/.config/am/tui-state.json`, so
   Space plays it again from there after the engine closed, also in a later session.
 - Esc closes a sign-in that opened during the session; `S` starts it again. `NO_COLOR=1` draws
   without colors.
+
+### 5a. settings.json
+
+The TUI keeps its own settings in `settings.json` in the config directory
+(`~/.config/am/settings.json`), next to the env file. The file holds only what differs from the
+defaults: a fresh install has none, and deleting it resets everything. `v` writes it, and you can
+edit it by hand:
+
+```json
+{ "artwork": "blocks" }
+```
+
+- `artwork` is how covers are drawn:
+  - `"images"`, the default: kitty images where the terminal answers the graphics query and am
+    isn't inside tmux, else half blocks. With `TERM=dumb`, and with `NO_COLOR` where it would be
+    half blocks, nothing is drawn.
+  - `"blocks"`: half blocks, always.
+  - `"off"`: no artwork, and none is downloaded.
+
+  When images can't be shown, the message after `v` says what is on screen and why, e.g.
+  `Artwork: images (showing blocks: inside tmux)`.
+- `AM_IMAGES` (environment or env file) wins over `artwork` for the run, with all its values:
+  `auto` (as `"images"`), `kitty` (kitty images even where the terminal didn't answer,
+  placeholders where it is known to have them), `placeholders`, `placements`, `blocks` and `off`.
+  `v` then changes only the session, and says so.
+- The TUI reads the file once, when it opens: an edit applies on the next start. Each save from `v`
+  reads the file again and changes only its own entry. An edit made while the TUI is open is
+  kept, and so are entries am doesn't know, in their order. A change back to a default removes
+  its entry. The file is replaced whole (a temporary file, then a rename). A `settings.json` that
+  is a link (dotfiles) stays one, and the file it points to is replaced. A link am can't follow
+  (a loop) stays as it is, and the save fails with a message; one whose file is gone is replaced
+  by am's own file.
+- A bad value (`"artwork": "kitty"`) falls back to its default, and the status line names the
+  first problem when the TUI opens (`AM_TUI_LOG` gets all of them). A file that isn't valid JSON
+  is never overwritten: am starts on the defaults, and `v` lasts only for the session, with a
+  message that says why.
 
 ---
 

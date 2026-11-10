@@ -1,5 +1,6 @@
-// MusicKit JS v3 playback engine page. Browser-agnostic: the CLI drives it over SSE (/events)
-// and it reports state back with POSTs, so the same page runs in Chrome or Firefox.
+// MusicKit JS v3 playback engine page. Browser-agnostic: the CLI drives it over SSE (/events),
+// and it reports state back over a WebSocket (/reports) and command results with POSTs, so the
+// same page runs in Chrome or Firefox.
 'use strict'
 
 const params = new URLSearchParams(location.search)
@@ -592,6 +593,19 @@ async function stopLive(late) {
   await settle(late, 'stop()', music.stop())
 }
 
+// Before a station. As a station replaces a song, MusicKit stop()s the song's player, and on a
+// song past 0:00 (playing, or paused mid-way) that keeps Firefox at ~120 % CPU until a page reload
+// or the next song (macOS, Firefox 159). On one paused at 0:00, as `am stop` leaves it, it doesn't.
+// So a loaded song is paused and rewound first, as a stop does it and within its bounds. Live radio
+// plays in a player of its own and can't pause. A give-up doesn't fail the station: it goes into
+// `late`, and a song still playing after the pause isn't sought; the station replaces it as before.
+async function rewindSong(late) {
+  if (!music.nowPlayingItem || isLive()) return
+  await pauseNow(late)
+  await until(notPlaying)
+  if (!music.isPlaying && music.currentPlaybackTime !== 0) await settle(late, 'seekToTime(0)', music.seekToTime(0))
+}
+
 // A pause or stop that leaves MusicKit playing failed, whatever its steps answered: it throws, with
 // what it gave up on first (the daemon logs page errors that start "gave up waiting on").
 function requireSilent(late, step) {
@@ -829,21 +843,26 @@ const am = {
     return load(gen, async (ctx) => {
       const { check, playing, takeMusic } = ctx
       if (req.station || req.stationFor) {
+        // A station for a song, or else for an artist. Worked out before the rewind: a request that
+        // can't play leaves the song alone.
+        const { song, artist } = req.stationFor ?? {}
+        const seed = song ? { song } : artist ? { artist } : null
+        if (!req.station && !seed) throw new Error('stationFor needs a song or an artist')
         await takeMusic()
+        const late = []
+        await rewindSong(late)
+        await check()
         music.autoplayEnabled = autoplay
         stoppedLive = null
         if (req.station) {
           context = { type: 'stations', id: req.station, name: null }
           await music.setQueue({ station: req.station })
         } else {
-          const [kind, id] = req.stationFor.song ? ['song', req.stationFor.song] : ['artist', req.stationFor.artist]
-          if (!id) throw new Error('stationFor needs a song or an artist')
           context = null
-          await music.setStationQueue({ [kind]: id })
+          await music.setStationQueue(seed)
         }
         await check()
         keepVolume()
-        const late = []
         await settle(late, 'play()', playing(music.play()), START_MS)
         await check()
         return answer(late)
@@ -913,7 +932,8 @@ const am = {
     return answer(late)
   },
   // Not music.stop(): after it, Firefox's content process and Widevine helper often keep messaging
-  // each other at ~120 % CPU (macOS, Firefox 158) until the engine closes. The song stays loaded.
+  // each other at ~120 % CPU (macOS, Firefox 158 and 159) until a page reload, the next song or the
+  // engine's close. The song stays loaded.
   // Live radio has no pause, so it does stop.
   // Every wait is bounded (at most about 5 s in all). Still playing after the pause, it fails with
   // the reason and doesn't seek. Silent, it answers as stopped: paused at 0:00 when the seek lands,
@@ -1090,6 +1110,7 @@ function connect() {
     }
     fetch('/result', { method: 'POST', body: JSON.stringify(reply) })
   }
+  const sendReport = reportSocket(`ws://${location.host}/reports?engine=${ENGINE}`)
   let last = 0
   let trailing = null
   report = () => {
@@ -1104,9 +1125,31 @@ function connect() {
       return
     }
     last = Date.now()
-    fetch('/report', { method: 'POST', body: JSON.stringify(snapshot()), keepalive: true }).catch(() => {})
+    sendReport(JSON.stringify(snapshot()))
   }
   setInterval(report, 1000)
+}
+
+// Sends each report over one WebSocket per page load: a new HTTP request a second costs the
+// browser memory it never gives back. A socket that closes (the daemon restarted, say) is opened
+// again by the next report, which goes out once it opens.
+function reportSocket(url) {
+  let socket = null
+  let unsent = null // the latest report while the socket opens
+  return (body) => {
+    if (socket?.readyState === WebSocket.OPEN) return socket.send(body)
+    unsent = body
+    if (socket) return
+    const opening = new WebSocket(url)
+    opening.onopen = () => {
+      opening.send(unsent)
+      unsent = null
+    }
+    opening.onclose = () => {
+      if (socket === opening) socket = null
+    }
+    socket = opening
+  }
 }
 
 // Engine pages must hold the current launch nonce; a stale restored copy unloads itself.

@@ -490,7 +490,7 @@ test "state is one data line with the build, the engine and the report verbatim"
     const wire = try runEndpoint(a, state(f.host(), &t.reply), &t);
     try testing.expectEqual(@as(u8, 0), wire.code);
     try testing.expectEqualStrings(
-        \\{"build":"0123456789abcdef","engine":{"kind":"chrome","pid":4242,"headless":true,"signin_window":false,"idle_close_in_s":300},"report":{"playbackState":"playing","volume":0.15},"report_age_ms":420}
+        \\{"build":"0123456789abcdef","engine":{"kind":"chrome","pid":4242,"headless":true,"signin_window":false,"idle_close_in_s":300,"keep_engine_requests":0},"report":{"playbackState":"playing","volume":0.15},"report_age_ms":420}
     , wire.data[0]);
 
     var idle: Fake = .{ .arena = a };

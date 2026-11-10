@@ -3,14 +3,18 @@
 //! background process or the terminal comes out as an `Effect` for the app to carry out; the
 //! app drains `effects` right after every call, while the slices in them are still valid.
 const std = @import("std");
+const graphics = @import("graphics.zig");
+const input = @import("input.zig");
 const keys = @import("keys.zig");
 const list_mod = @import("list.zig");
 const model = @import("../music/model.zig");
 const player = @import("../daemon/player.zig");
 const playstate = @import("playstate.zig");
+const settings = @import("../settings.zig");
 
 const Allocator = std.mem.Allocator;
 const Item = model.Item;
+const Key = input.Key;
 const List = list_mod.List;
 const Section = keys.Section;
 const QueueRequest = player.QueueRequest;
@@ -137,12 +141,27 @@ pub const Effect = union(enum) {
     /// Find the album or artist of an item, then open it.
     go: struct { ref: Ref, artist: bool },
     quit: struct { stop: bool },
-    suspend_process,
     redraw,
-    image_mode,
+    /// Draw artwork this way; the app picks the protocol for it.
+    set_artwork: graphics.Artwork,
+    /// Save one change to settings.json.
+    save_setting: settings.Change,
     toast: []const u8,
     /// Sign in to Apple Music again.
     signin,
+};
+
+/// The artwork setting, and what `v` does with it.
+pub const ArtworkState = struct {
+    /// What is drawn: settings.json's artwork, or `AM_IMAGES`'s for the run, then `v`'s picks.
+    setting: graphics.Artwork = .images,
+    /// Why `v` changes only the session (`AM_IMAGES is set`, `settings.json isn't valid JSON`);
+    /// null when it saves the setting.
+    session_only: ?[]const u8 = null,
+    /// What Images shows instead in this terminal, and why; null when it shows kitty images, and
+    /// before the graphics query's answer unless the reason doesn't wait for it (tmux,
+    /// TERM=dumb). The app keeps it current.
+    fallback: ?graphics.Fallback = null,
 };
 
 pub const section_count = std.meta.fieldNames(Section).len;
@@ -170,6 +189,10 @@ pub const Ui = struct {
     height: usize = 20,
     /// The sidebar is drawn (wide enough).
     has_sidebar: bool = true,
+    /// Which keys run which action.
+    bindings: keys.Bindings = .defaults,
+    /// Set by the app at start.
+    artwork: ArtworkState = .{},
     effects: std.ArrayList(Effect) = .empty,
     /// What effects point to that no view keeps (a queue's song ids); reset by `effectsDone`.
     scratch: std.heap.ArenaAllocator,
@@ -381,7 +404,29 @@ pub const Ui = struct {
         return s.focused;
     }
 
-    pub fn command(u: *Ui, cmd: keys.Command, now_ms: i64) void {
+    /// A key from the main UI. `^c` quits from anywhere; in a text field a character types
+    /// itself; any other key runs the action it's bound to in the current context, if any.
+    pub fn key(u: *Ui, k: Key, now_ms: i64) void {
+        if (keys.fixed(k) == .quit) return u.emit(.{ .quit = .{ .stop = false } });
+        if (u.textMode()) {
+            if (keys.typed(k)) |c| return u.text(.{ .insert = c }, now_ms);
+            const a = u.bindings.lookup(.typing, k) orelse return;
+            return u.text(a.does.typing, now_ms);
+        }
+        const a = u.bindings.lookup(.lists, k) orelse return;
+        u.command(a.does.lists, now_ms);
+    }
+
+    /// A key while the sign-in box covers the session: only the player's keys answer.
+    pub fn playerKey(u: *Ui, k: Key, now_ms: i64) void {
+        const a = u.bindings.lookup(.lists, k) orelse return;
+        switch (a.does.lists) {
+            .toggle, .next, .previous, .seek, .volume, .mute => u.command(a.does.lists, now_ms),
+            else => {},
+        }
+    }
+
+    fn command(u: *Ui, cmd: keys.Command, now_ms: i64) void {
         if (u.overlay == .help) {
             switch (cmd) {
                 .move => |n| u.scrollHelp(n),
@@ -461,19 +506,44 @@ pub const Ui = struct {
             .info => {
                 if (u.selectedItem()) |it| u.showInfo(it.*) else u.toast("Nothing selected");
             },
-            .image_mode => u.emit(.image_mode),
+            .image_mode => u.cycleArtwork(),
             .help => {
                 u.overlay = .help;
                 u.help_scroll = 0;
             },
             .quit => u.emit(.{ .quit = .{ .stop = false } }),
             .quit_stop => u.emit(.{ .quit = .{ .stop = true } }),
-            .suspend_process => u.emit(.suspend_process),
             .refresh => if (u.current()) |v| u.refresh(v),
             .redraw => u.emit(.redraw),
             .signin => u.emit(.signin),
         }
         _ = now_ms;
+    }
+
+    /// `v`: the next artwork setting, Images → Blocks → Off → Images, saved unless it can't be.
+    fn cycleArtwork(u: *Ui) void {
+        const a = &u.artwork;
+        a.setting = switch (a.setting) {
+            .images => .blocks,
+            .blocks => .off,
+            .off => .images,
+        };
+        u.emit(.{ .set_artwork = a.setting });
+        if (artworkMessage(u.scratch.allocator(), a.*)) |m| u.toast(m) else |_| {}
+        // Last: a save that fails has the last word.
+        if (a.session_only == null) u.emit(.{ .save_setting = .{ .artwork = a.setting } });
+    }
+
+    /// `Artwork: images (showing blocks: inside tmux)`, and why it isn't saved, if it isn't.
+    fn artworkMessage(arena: Allocator, a: ArtworkState) Allocator.Error![]const u8 {
+        var out: std.Io.Writer.Allocating = .init(arena);
+        const w = &out.writer;
+        w.print("Artwork: {t}", .{a.setting}) catch return error.OutOfMemory;
+        if (a.setting == .images) if (a.fallback) |f| {
+            w.print(" (showing {s}: {s})", .{ if (f.shows == .half_blocks) "blocks" else "nothing", f.why }) catch return error.OutOfMemory;
+        };
+        if (a.session_only) |why| w.print(", for this session only ({s})", .{why}) catch return error.OutOfMemory;
+        return out.written();
     }
 
     fn scrollHelp(u: *Ui, n: i32) void {
@@ -790,8 +860,7 @@ pub const Ui = struct {
 
     // ---- Text fields ----
 
-    pub fn text(u: *Ui, cmd: keys.TextCommand, now_ms: i64) void {
-        if (cmd == .quit) return u.emit(.{ .quit = .{ .stop = false } });
+    fn text(u: *Ui, cmd: keys.TextCommand, now_ms: i64) void {
         const v = u.current() orelse return;
         if (u.filtering) return u.filterText(v, cmd);
         const s = v.search orelse return;
@@ -842,7 +911,6 @@ pub const Ui = struct {
                 s.library = !s.library;
                 if (s.submitted.items.len > 0) u.runSearch(v, s);
             },
-            .quit => unreachable,
         }
     }
 
@@ -908,7 +976,7 @@ pub const Ui = struct {
                 u.filtering = false;
                 f.clearRetainingCapacity();
             },
-            .up, .toggle_scope, .quit => return,
+            .up, .toggle_scope => return,
         }
         v.list.setFilter(f.items) catch {};
         u.maybeMore(v);
@@ -1007,14 +1075,14 @@ test "sections start their view and its load; Enter opens an album, Esc goes bac
     try testing.expectEqual(Kind.home, home.kind);
     try testing.expectEqual(@as(u64, home.id), takeEffects(&u)[0].load);
 
-    u.command(.{ .section = .albums }, 0);
+    u.key(.char('4'), 0);
     const albums = u.current().?;
     try testing.expectEqual(Kind{ .library = .album }, albums.kind);
     try testing.expectEqual(albums.id, takeEffects(&u)[0].load);
     var album: Item = .{ .kind = .album, .id = "l.abc", .library = true, .title = "Trench", .artist = "twenty one pilots" };
     try albums.list.appendPage(&.{album}, null, 1);
 
-    u.command(.open, 0);
+    u.key(.{ .code = .enter }, 0);
     const detail = u.current().?;
     try testing.expectEqual(Kind.tracks, detail.kind);
     try testing.expectEqualStrings("Trench", detail.subject.?.title);
@@ -1026,22 +1094,22 @@ test "sections start their view and its load; Enter opens an album, Esc goes bac
 
     // Enter on a track plays the album from that track.
     try detail.list.appendPage(&.{ song("i.1", "Jumpsuit"), song("i.2", "Levitate") }, null, 2);
-    u.command(.{ .move = 1 }, 0);
-    u.command(.open, 0);
+    u.key(.char('j'), 0);
+    u.key(.{ .code = .enter }, 0);
     const play = takeEffects(&u)[0].play;
     try testing.expectEqual(player.ContainerType.@"library-albums", play.container.?.type);
     try testing.expectEqualStrings("l.abc", play.container.?.id);
     try testing.expectEqualStrings("i.2", play.startId.?);
 
-    u.command(.back, 0);
+    u.key(.{ .code = .esc }, 0);
     try testing.expectEqual(albums, u.current().?);
     // Esc at the root moves the focus to the sidebar.
-    u.command(.back, 0);
+    u.key(.{ .code = .esc }, 0);
     try testing.expectEqual(Focus.sidebar, u.focus);
     // The sidebar's pick follows the section (Albums); one down is Artists.
-    u.command(.{ .move = 1 }, 0);
+    u.key(.char('j'), 0);
     try testing.expectEqual(@as(usize, 4), u.sidebar_pick);
-    u.command(.open, 0);
+    u.key(.{ .code = .enter }, 0);
     try testing.expectEqual(Section.artists, u.section);
     try testing.expectEqual(Focus.main, u.focus);
 }
@@ -1049,43 +1117,43 @@ test "sections start their view and its load; Enter opens an album, Esc goes bac
 test "a song outside an album plays the list from there; a station tunes in; P plays the container" {
     var u: Ui = .init(testing.allocator);
     defer u.deinit();
-    u.command(.{ .section = .charts }, 0);
+    u.key(.char('9'), 0);
     const charts = u.current().?;
     _ = takeEffects(&u);
     try charts.list.appendGroup(.{ .title = "Top Songs", .items = &.{ song("1", "a"), song("2", "b"), song("3", "c") } });
     try charts.list.appendGroup(.{ .title = "Top Albums", .items = &.{.{ .kind = .album, .id = "9", .catalog_id = "9", .title = "x" }} });
-    u.command(.{ .move = 1 }, 0);
-    u.command(.open, 0);
+    u.key(.char('j'), 0);
+    u.key(.{ .code = .enter }, 0);
     const play = takeEffects(&u)[0].play;
     try testing.expectEqual(@as(usize, 3), play.songs.?.len);
     try testing.expectEqualStrings("2", play.startId.?);
 
     // P on the album plays it from the top.
-    u.command(.bottom, 0);
-    u.command(.play_container, 0);
+    u.key(.char('G'), 0);
+    u.key(.char('P'), 0);
     try testing.expectEqualStrings("9", takeEffects(&u)[0].play.container.?.id);
 
-    u.command(.{ .section = .radio }, 0);
+    u.key(.char('8'), 0);
     const radio = u.current().?;
     _ = takeEffects(&u);
     try radio.list.appendPage(&.{.{ .kind = .station, .id = "ra.978194965", .title = "Apple Music 1", .is_live = true }}, null, null);
-    u.command(.open, 0);
+    u.key(.{ .code = .enter }, 0);
     try testing.expectEqualStrings("ra.978194965", takeEffects(&u)[0].play.station.?);
-    u.command(.station, 0);
+    u.key(.char('R'), 0);
     try testing.expectEqualStrings("ra.978194965", takeEffects(&u)[0].play.station.?);
 }
 
 test "favorite flips the row at once and is put back when Apple refuses" {
     var u: Ui = .init(testing.allocator);
     defer u.deinit();
-    u.command(.{ .section = .songs }, 0);
+    u.key(.char('3'), 0);
     const songs = u.current().?;
     _ = takeEffects(&u);
     var s = song("i.1", "a");
     s.library = true;
     s.favorited = false;
     try songs.list.appendPage(&.{s}, null, 1);
-    u.command(.favorite, 0);
+    u.key(.char('f'), 0);
     const e = takeEffects(&u)[0].favorite;
     try testing.expect(e.on);
     try testing.expectEqual(@as(?bool, true), songs.list.rows.items[e.ref.row].item.favorited);
@@ -1099,7 +1167,7 @@ test "favorite: every open copy of the song shows the same heart, also after a f
     var u: Ui = .init(testing.allocator);
     defer u.deinit();
     // The song from the catalog, in a view on another section's stack.
-    u.command(.{ .section = .home }, 0);
+    u.key(.char('1'), 0);
     const home = u.current().?;
     _ = takeEffects(&u);
     try home.list.appendPage(&.{
@@ -1108,7 +1176,7 @@ test "favorite: every open copy of the song shows the same heart, also after a f
         .{ .kind = .album, .id = "100", .catalog_id = "100", .title = "an album, same number" },
     }, null, 3);
     // The same song from the library: its own id, the catalog id beside it.
-    u.command(.{ .section = .songs }, 0);
+    u.key(.char('3'), 0);
     const songs = u.current().?;
     _ = takeEffects(&u);
     var lib = song("i.1", "a");
@@ -1117,7 +1185,7 @@ test "favorite: every open copy of the song shows the same heart, also after a f
     lib.favorited = false;
     try songs.list.appendPage(&.{lib}, null, 1);
 
-    u.command(.favorite, 0);
+    u.key(.char('f'), 0);
     const e = takeEffects(&u)[0].favorite;
     try testing.expect(e.on);
     try testing.expectEqual(@as(?bool, true), home.list.rows.items[0].item.favorited);
@@ -1134,22 +1202,22 @@ test "favorite: an open album's header and the info overlay show the new heart t
     var u: Ui = .init(testing.allocator);
     defer u.deinit();
     var album: Item = .{ .kind = .album, .id = "9", .catalog_id = "9", .title = "x", .favorited = false };
-    u.command(.{ .section = .home }, 0);
+    u.key(.char('1'), 0);
     _ = takeEffects(&u);
     u.openDetail(album, null);
     const detail = u.current().?;
     _ = takeEffects(&u);
-    u.command(.{ .section = .albums }, 0);
+    u.key(.char('4'), 0);
     const albums = u.current().?;
     _ = takeEffects(&u);
     album.id = "l.9";
     album.library = true;
     try albums.list.appendPage(&.{album}, null, 1);
 
-    u.command(.favorite, 0);
+    u.key(.char('f'), 0);
     const e = takeEffects(&u)[0].favorite;
     try testing.expectEqual(@as(?bool, true), detail.subject.?.favorited);
-    u.command(.info, 0);
+    u.key(.char('i'), 0);
     try testing.expectEqual(@as(?bool, true), u.info.?.favorited);
 
     u.setFavoriteCopies(album, true, e.was);
@@ -1160,11 +1228,11 @@ test "favorite: an open album's header and the info overlay show the new heart t
 test "favorite: a heart that wasn't known goes back to unknown after a failure, not to no" {
     var u: Ui = .init(testing.allocator);
     defer u.deinit();
-    u.command(.{ .section = .songs }, 0);
+    u.key(.char('3'), 0);
     const songs = u.current().?;
     _ = takeEffects(&u);
     try songs.list.appendPage(&.{song("1", "a")}, null, 1);
-    u.command(.favorite, 0);
+    u.key(.char('f'), 0);
     const e = takeEffects(&u)[0].favorite;
     try testing.expect(e.on);
     try testing.expectEqual(@as(?bool, null), e.was);
@@ -1175,28 +1243,30 @@ test "favorite: a heart that wasn't known goes back to unknown after a failure, 
 test "search: typing debounces suggestions, Enter searches, see-all pages the section" {
     var u: Ui = .init(testing.allocator);
     defer u.deinit();
-    u.command(.search, 0);
+    _ = u.current();
+    _ = takeEffects(&u);
+    u.key(.char('/'), 0);
     const v = u.current().?;
     try testing.expect(u.textMode());
     try testing.expectEqual(@as(usize, 0), takeEffects(&u).len); // nothing to load before a term
-    for ("shy") |c| u.text(.{ .insert = c }, 1000);
+    for ("shy") |c| u.key(.char(c), 1000);
     u.tick(1200);
     try testing.expectEqual(@as(usize, 0), takeEffects(&u).len);
     u.tick(1300);
     const sug = takeEffects(&u)[0].suggest;
     try testing.expectEqualStrings("shy", sug.term);
     // Digits and space are text here.
-    u.text(.{ .insert = ' ' }, 1400);
-    u.text(.{ .insert = '1' }, 1400);
-    u.text(.delete_back, 1400);
-    u.text(.submit, 1500);
+    u.key(.char(' '), 1400);
+    u.key(.char('1'), 1400);
+    u.key(.{ .code = .backspace }, 1400);
+    u.key(.{ .code = .enter }, 1500);
     try testing.expectEqual(v.id, takeEffects(&u)[0].load);
     try testing.expectEqualStrings("shy", v.search.?.submitted.items);
     try testing.expect(!u.textMode());
 
     try v.list.appendGroup(.{ .title = "Songs", .key = "songs", .items = &.{ song("1", "Shy Away"), song("2", "x") }, .next_offset = 25, .limit = 1 });
-    u.command(.{ .move = 1 }, 0); // to "See all"
-    u.command(.open, 0);
+    u.key(.char('j'), 0); // to "See all"
+    u.key(.{ .code = .enter }, 0);
     const all = u.current().?;
     try testing.expectEqual(Kind{ .group = .search }, all.kind);
     try testing.expectEqualStrings("shy", all.term);
@@ -1210,7 +1280,7 @@ test "search: typing debounces suggestions, Enter searches, see-all pages the se
 test "a paste with invalid UTF-8 or a cut-off sequence types only what decodes" {
     var u: Ui = .init(testing.allocator);
     defer u.deinit();
-    u.command(.search, 0);
+    u.key(.char('/'), 0);
     const v = u.current().?;
     u.paste("ab\xffc\xc3\xa9\n\x80d\xe2\x82", 0);
     try testing.expectEqualStrings("abc\u{e9}d", v.search.?.query.items);
@@ -1219,21 +1289,21 @@ test "a paste with invalid UTF-8 or a cut-off sequence types only what decodes" 
 test "^r reloads a view (a fresh epoch drops loads already on their way), not a static see-all" {
     var u: Ui = .init(testing.allocator);
     defer u.deinit();
-    u.command(.{ .section = .charts }, 0);
+    u.key(.char('9'), 0);
     const charts = u.current().?;
     _ = takeEffects(&u);
     try charts.list.appendGroup(.{ .title = "Top Songs", .items = &.{ song("1", "a"), song("2", "b") }, .limit = 1 });
     const before = charts.list.epoch;
-    u.command(.refresh, 0);
+    u.key(.ctrlChar('r'), 0);
     try testing.expect(charts.list.epoch != before);
     try testing.expectEqual(charts.id, takeEffects(&u)[0].load);
     try charts.list.appendGroup(.{ .title = "Top Songs", .items = &.{ song("1", "a"), song("2", "b") }, .limit = 1 });
-    u.command(.{ .move = 1 }, 0);
-    u.command(.open, 0);
+    u.key(.char('j'), 0);
+    u.key(.{ .code = .enter }, 0);
     const all = u.current().?;
     try testing.expectEqual(Kind{ .group = .static }, all.kind);
     _ = takeEffects(&u);
-    u.command(.refresh, 0);
+    u.key(.ctrlChar('r'), 0);
     try testing.expectEqual(@as(usize, 2), all.list.len());
     try testing.expectEqual(std.meta.Tag(Effect).toast, std.meta.activeTag(takeEffects(&u)[0]));
 }
@@ -1241,17 +1311,80 @@ test "^r reloads a view (a fresh epoch drops loads already on their way), not a 
 test "filter narrows the current list and Esc clears it" {
     var u: Ui = .init(testing.allocator);
     defer u.deinit();
-    u.command(.{ .section = .songs }, 0);
+    u.key(.char('3'), 0);
     const v = u.current().?;
     _ = takeEffects(&u);
     try v.list.appendPage(&.{ song("1", "Shy Away"), song("2", "Heathens") }, null, 2);
-    u.command(.filter, 0);
+    u.key(.ctrlChar('f'), 0);
     try testing.expect(u.textMode());
-    for ("hea") |c| u.text(.{ .insert = c }, 0);
+    for ("hea") |c| u.key(.char(c), 0);
     try testing.expectEqual(@as(usize, 1), v.list.len());
-    u.text(.leave, 0);
+    u.key(.{ .code = .esc }, 0);
     try testing.expect(!u.textMode());
     try testing.expectEqual(@as(usize, 2), v.list.len());
+}
+
+/// `v`, the artwork key.
+fn pressArtwork(u: *Ui) void {
+    u.key(.char('v'), 0);
+}
+
+/// The home view open and its load taken, as when the TUI is up, so a key's effects are its own.
+fn openHome(u: *Ui) void {
+    _ = u.current();
+    u.effectsDone();
+}
+
+test "v cycles the artwork setting images → blocks → off → images and saves each pick" {
+    var u: Ui = .init(testing.allocator);
+    defer u.deinit();
+    openHome(&u);
+    for ([_]graphics.Artwork{ .blocks, .off, .images, .blocks }, [_][]const u8{ "Artwork: blocks", "Artwork: off", "Artwork: images", "Artwork: blocks" }) |want, message| {
+        pressArtwork(&u);
+        const e = takeEffects(&u);
+        try testing.expectEqual(@as(usize, 3), e.len);
+        try testing.expectEqual(want, e[0].set_artwork);
+        try testing.expectEqualStrings(message, e[1].toast);
+        // Last, so that a save that fails has the last word.
+        try testing.expectEqual(want, e[2].save_setting.artwork);
+        u.effectsDone();
+    }
+}
+
+test "v landing on Images says what is on screen instead, and why" {
+    var u: Ui = .init(testing.allocator);
+    defer u.deinit();
+    openHome(&u);
+    u.artwork = .{ .setting = .off, .fallback = .{ .shows = .half_blocks, .why = "inside tmux" } };
+    pressArtwork(&u);
+    try testing.expectEqualStrings("Artwork: images (showing blocks: inside tmux)", takeEffects(&u)[1].toast);
+    u.effectsDone();
+    pressArtwork(&u);
+    try testing.expectEqualStrings("Artwork: blocks", takeEffects(&u)[1].toast);
+    u.effectsDone();
+    u.artwork = .{ .setting = .off, .fallback = .{ .shows = .none, .why = "TERM=dumb" } };
+    pressArtwork(&u);
+    try testing.expectEqualStrings("Artwork: images (showing nothing: TERM=dumb)", takeEffects(&u)[1].toast);
+}
+
+test "with AM_IMAGES set, or a settings.json am can't write, v changes only the session and says why" {
+    var u: Ui = .init(testing.allocator);
+    defer u.deinit();
+    openHome(&u);
+    u.artwork = .{ .setting = .images, .session_only = "AM_IMAGES is set" };
+    pressArtwork(&u);
+    var e = takeEffects(&u);
+    try testing.expectEqual(@as(usize, 2), e.len);
+    try testing.expectEqual(graphics.Artwork.blocks, e[0].set_artwork);
+    try testing.expectEqualStrings("Artwork: blocks, for this session only (AM_IMAGES is set)", e[1].toast);
+    u.effectsDone();
+
+    u.artwork = .{ .setting = .off, .session_only = "settings.json isn't valid JSON", .fallback = .{ .shows = .half_blocks, .why = "inside tmux" } };
+    pressArtwork(&u);
+    e = takeEffects(&u);
+    try testing.expectEqual(@as(usize, 2), e.len);
+    try testing.expectEqual(graphics.Artwork.images, e[0].set_artwork);
+    try testing.expectEqualStrings("Artwork: images (showing blocks: inside tmux), for this session only (settings.json isn't valid JSON)", e[1].toast);
 }
 
 test "player keys become control effects; volume and mute are remembered" {
@@ -1260,24 +1393,26 @@ test "player keys become control effects; volume and mute are remembered" {
     _ = u.current();
     _ = takeEffects(&u);
     u.volume = 0.2;
-    u.command(.toggle, 0);
+    u.key(.char(' '), 0);
     try testing.expectEqual(player.Action.toggle, takeEffects(&u)[0].control.action);
-    u.command(.{ .seek = -30 }, 0);
+    u.key(.char('['), 0);
     try testing.expectEqual(@as(f64, -30), takeEffects(&u)[0].control.value.number);
-    u.command(.{ .volume = -5 }, 0);
+    u.key(.char('-'), 0);
     try testing.expectApproxEqAbs(@as(f64, 0.15), u.volume, 1e-9);
     try testing.expectApproxEqAbs(@as(f64, 0.15), takeEffects(&u)[0].control.value.number, 1e-9);
-    u.command(.mute, 0);
+    u.key(.char('m'), 0);
     try testing.expectEqual(@as(f64, 0), takeEffects(&u)[0].control.value.number);
     u.playerVolume(0, true); // the player confirms the mute
     try testing.expectApproxEqAbs(@as(f64, 0.15), u.muted_from.?, 1e-9);
-    u.command(.mute, 0);
+    u.key(.char('m'), 0);
     try testing.expectApproxEqAbs(@as(f64, 0.15), takeEffects(&u)[0].control.value.number, 1e-9);
-    u.command(.repeat, 0);
+    u.key(.char('r'), 0);
     try testing.expectEqualStrings("all", takeEffects(&u)[0].control.value.string);
-    u.command(.shuffle, 0);
+    u.key(.char('s'), 0);
     try testing.expect(takeEffects(&u)[0].control.value.boolean);
-    u.command(.{ .volume = 100 }, 0);
+    // Volume stops at full.
+    u.volume = 0.98;
+    u.key(.char('+'), 0);
     try testing.expectEqual(@as(f64, 1), u.volume);
     u.volume = 0.1;
     // A new engine page with nothing queued says 1: not followed.
@@ -1290,38 +1425,40 @@ test "player keys become control effects; volume and mute are remembered" {
 test "queue view: Enter jumps, d removes; d elsewhere explains" {
     var u: Ui = .init(testing.allocator);
     defer u.deinit();
-    u.command(.{ .section = .queue }, 0);
+    u.key(.char('0'), 0);
     const q = u.current().?;
     _ = takeEffects(&u);
     try q.list.appendPage(&.{ song("a", "a"), song("b", "b") }, null, null);
     q.list.rows.items[1].aux = 7;
-    u.command(.{ .move = 1 }, 0);
-    u.command(.open, 0);
+    u.key(.char('j'), 0);
+    u.key(.{ .code = .enter }, 0);
     try testing.expectEqual(@as(u32, 7), takeEffects(&u)[0].control.value.index);
-    u.command(.remove, 0);
+    u.key(.char('d'), 0);
     const rm = takeEffects(&u)[0].control;
     try testing.expectEqual(player.Action.remove, rm.action);
     try testing.expectEqual(@as(u32, 7), rm.value.index);
-    u.command(.{ .section = .home }, 0);
+    u.key(.char('1'), 0);
     _ = takeEffects(&u);
-    u.command(.remove, 0);
+    u.key(.char('d'), 0);
     try testing.expectEqual(std.meta.Tag(Effect).toast, std.meta.activeTag(takeEffects(&u)[0]));
 }
 
 test "Tab in search results switches catalog / library; Esc leaves an empty search without a sidebar" {
     var u: Ui = .init(testing.allocator);
     defer u.deinit();
-    u.command(.search, 0);
+    _ = u.current();
+    _ = takeEffects(&u);
+    u.key(.char('/'), 0);
     const v = u.current().?;
-    for ("queen") |c| u.text(.{ .insert = c }, 0);
-    u.text(.submit, 0);
+    for ("queen") |c| u.key(.char(c), 0);
+    u.key(.{ .code = .enter }, 0);
     _ = takeEffects(&u);
     // Typed on after submitting, then back to the results.
-    u.command(.{ .move = -1 }, 0);
-    u.text(.{ .insert = 'x' }, 0);
-    u.text(.down, 0);
+    u.key(.char('k'), 0);
+    u.key(.char('x'), 0);
+    u.key(.{ .code = .down }, 0);
     v.search.?.focused = false;
-    u.command(.focus_next, 0);
+    u.key(.{ .code = .tab }, 0);
     try testing.expect(v.search.?.library);
     try testing.expectEqualStrings("queen", v.search.?.submitted.items);
     try testing.expectEqual(v.id, takeEffects(&u)[0].load);
@@ -1329,19 +1466,24 @@ test "Tab in search results switches catalog / library; Esc leaves an empty sear
 
     // Narrow: no sidebar, no results. Esc gives the keys back, Tab goes through the sections.
     u.has_sidebar = false;
-    u.command(.search, 0);
+    u.key(.char('/'), 0);
     v.search.?.submitted.clearRetainingCapacity();
     v.search.?.query.clearRetainingCapacity();
     v.list.clear();
     try testing.expect(u.textMode());
-    u.text(.leave, 0);
+    u.key(.{ .code = .esc }, 0);
     try testing.expect(!u.textMode());
-    u.command(.{ .section = .charts }, 0);
+    u.key(.char('9'), 0);
     try testing.expectEqual(Section.charts, u.section);
-    u.command(.focus_next, 0);
+    u.key(.{ .code = .tab }, 0);
     try testing.expectEqual(Section.search, u.section);
-    u.command(.focus_prev, 0);
-    u.command(.focus_prev, 0);
+    // Search gives its field the keys; Esc gives them back.
+    try testing.expect(u.textMode());
+    u.key(.{ .code = .tab, .shift = true }, 0);
+    try testing.expectEqual(Section.search, u.section);
+    u.key(.{ .code = .esc }, 0);
+    u.key(.{ .code = .tab, .shift = true }, 0);
+    u.key(.{ .code = .tab, .shift = true }, 0);
     try testing.expectEqual(Section.radio, u.section);
 }
 
@@ -1356,7 +1498,7 @@ test "c opens the playing album with what the player knows of it" {
     , 0);
     defer snap.destroy();
     u.player = snap;
-    u.command(.jump_now, 0);
+    u.key(.char('c'), 0);
     const v = u.current().?;
     try testing.expectEqual(Kind.tracks, v.kind);
     try testing.expectEqualStrings("Band", v.subject.?.artist.?);
@@ -1370,14 +1512,122 @@ test "help closes on any key but scrolling; quit from anywhere" {
     defer u.deinit();
     _ = u.current();
     _ = takeEffects(&u);
-    u.command(.help, 0);
+    u.key(.char('?'), 0);
     try testing.expectEqual(Overlay.help, u.overlay);
     // j / k scroll it; anything else closes it.
-    u.command(.{ .move = 1 }, 0);
+    u.key(.char('j'), 0);
     try testing.expectEqual(Overlay.help, u.overlay);
     try testing.expectEqual(@as(usize, 1), u.help_scroll);
-    u.command(.open, 0);
+    u.key(.{ .code = .enter }, 0);
     try testing.expectEqual(Overlay.none, u.overlay);
-    u.command(.quit_stop, 0);
+    u.key(.char('Q'), 0);
     try testing.expect(takeEffects(&u)[0].quit.stop);
+}
+
+test "a key matches whole: Alt+j and Shift+↓ do nothing while j moves; Shift+Enter still opens" {
+    var u: Ui = .init(testing.allocator);
+    defer u.deinit();
+    u.key(.char('3'), 0);
+    const v = u.current().?;
+    _ = takeEffects(&u);
+    try v.list.appendPage(&.{ song("1", "a"), song("2", "b"), song("3", "c") }, null, 3);
+
+    u.key(.{ .code = .{ .char = 'j' }, .alt = true }, 0);
+    u.key(.{ .code = .down, .shift = true }, 0);
+    try testing.expectEqual(@as(usize, 0), takeEffects(&u).len);
+    u.key(.{ .code = .enter, .shift = true }, 0);
+    try testing.expectEqualStrings("1", takeEffects(&u)[0].play.startId.?);
+
+    u.key(.char('j'), 0);
+    // Ctrl+m is Enter wherever the terminal sends it apart.
+    u.key(.ctrlChar('m'), 0);
+    try testing.expectEqualStrings("2", takeEffects(&u)[0].play.startId.?);
+}
+
+test "keys only some terminals tell apart work as the shared key, in a list and in a text field" {
+    var u: Ui = .init(testing.allocator);
+    defer u.deinit();
+    u.key(.char('3'), 0);
+    const v = u.current().?;
+    _ = takeEffects(&u);
+    try v.list.appendPage(&.{ song("1", "a"), song("2", "b"), song("3", "c") }, null, 3);
+
+    // Shift+g is G (bottom); Ctrl+j is Enter.
+    u.key(.{ .code = .{ .char = 'g' }, .shift = true }, 0);
+    u.key(.ctrlChar('j'), 0);
+    try testing.expectEqualStrings("3", takeEffects(&u)[0].play.startId.?);
+    // Ctrl+Shift+u is ^u (half page up); Ctrl+Enter is Enter.
+    u.key(.{ .code = .{ .char = 'u' }, .ctrl = true, .shift = true }, 0);
+    u.key(.{ .code = .enter, .ctrl = true }, 0);
+    try testing.expectEqualStrings("1", takeEffects(&u)[0].play.startId.?);
+    // Ctrl+i is Tab; Ctrl+Alt+i is Alt+Tab, a key of its own that does nothing.
+    u.key(.{ .code = .{ .char = 'i' }, .ctrl = true, .alt = true }, 0);
+    try testing.expectEqual(Focus.main, u.focus);
+    u.key(.ctrlChar('i'), 0);
+    try testing.expectEqual(Focus.sidebar, u.focus);
+    u.key(.ctrlChar('i'), 0);
+    try testing.expectEqual(Focus.main, u.focus);
+    // Ctrl+[ is Esc: at a section's root it moves the focus to the sidebar.
+    u.key(.ctrlChar('['), 0);
+    try testing.expectEqual(Focus.sidebar, u.focus);
+
+    // In a text field: Ctrl+i switches catalog / library, Ctrl+[ leaves, Ctrl+j searches.
+    u.key(.char('/'), 0);
+    _ = takeEffects(&u);
+    const s = u.current().?.search.?;
+    for ("queen") |c| u.key(.char(c), 0);
+    u.key(.ctrlChar('i'), 0);
+    try testing.expect(s.library);
+    u.key(.ctrlChar('['), 0);
+    try testing.expect(!u.textMode());
+    try testing.expectEqual(Focus.sidebar, u.focus);
+    u.key(.char('/'), 0);
+    u.key(.ctrlChar('j'), 0);
+    try testing.expectEqualStrings("queen", s.submitted.items);
+}
+
+test "^c quits from a list, a text field and the help; q types in a field" {
+    var u: Ui = .init(testing.allocator);
+    defer u.deinit();
+    _ = u.current();
+    _ = takeEffects(&u);
+    u.key(.ctrlChar('c'), 0);
+    try testing.expect(!takeEffects(&u)[0].quit.stop);
+
+    u.key(.char('/'), 0);
+    _ = takeEffects(&u);
+    try testing.expect(u.textMode());
+    u.key(.char('q'), 0);
+    try testing.expectEqual(@as(usize, 0), takeEffects(&u).len);
+    // Ctrl+Shift+c, as Ghostty sends it, is ^c.
+    u.key(.{ .code = .{ .char = 'c' }, .ctrl = true, .shift = true }, 0);
+    try testing.expect(!takeEffects(&u)[0].quit.stop);
+
+    u.key(.{ .code = .esc }, 0);
+    u.key(.char('?'), 0);
+    try testing.expectEqual(Overlay.help, u.overlay);
+    u.key(.ctrlChar('c'), 0);
+    try testing.expect(!takeEffects(&u)[0].quit.stop);
+}
+
+test "in a text field every character types itself, shifted ones too; Alt+x types nothing" {
+    var u: Ui = .init(testing.allocator);
+    defer u.deinit();
+    _ = u.current();
+    u.key(.char('/'), 0);
+    const s = u.current().?.search.?;
+    for ([_]Key{
+        .char('q'),
+        .char('4'),
+        .{ .code = .{ .char = ' ' }, .shift = true },
+        .{ .code = .{ .char = 'a' }, .shift = true },
+        .{ .code = .{ .char = 'x' }, .alt = true },
+        .char(0xe9),
+    }) |k| u.key(k, 0);
+    try testing.expectEqualStrings("q4 A\u{e9}", s.query.items);
+    // Ctrl+h is Backspace; ^u clears.
+    u.key(.ctrlChar('h'), 0);
+    try testing.expectEqualStrings("q4 A", s.query.items);
+    u.key(.ctrlChar('u'), 0);
+    try testing.expectEqualStrings("", s.query.items);
 }
