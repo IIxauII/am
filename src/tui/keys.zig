@@ -408,7 +408,7 @@ pub const help = [_]HelpSection{
         .{ .keys = "i", .what = "details" },
     } },
     .{ .title = "App", .lines = &.{
-        .{ .keys = "v", .what = "artwork: image → blocks → off" },
+        .{ .keys = "v", .what = "artwork: images → blocks → off" },
         .{ .keys = "^r ^l", .what = "reload view, redraw" },
         .{ .keys = "^z", .what = "suspend" },
         .{ .keys = "q", .what = "quit (playing music goes on)" },
