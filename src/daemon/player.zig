@@ -8,6 +8,7 @@ const std = @import("std");
 const control_mod = @import("control.zig");
 const engine_page = @import("engine_page.zig");
 const host_mod = @import("host.zig");
+const platform = @import("../platform.zig");
 const play = @import("play.zig");
 const playback = @import("../playback.zig");
 const protocol = @import("protocol.zig");
@@ -335,15 +336,30 @@ pub fn control(host: Host, r: *Reply, req: ControlRequest) Reply.Error!void {
     };
     // A play makes its page call once a launch's page is ready, and on a reload's new page
     // load, not in its gap, where it would fail as not running and play-next or play-later
-    // would drop their songs. It never repairs. The state is read first, as for `am resume`,
-    // only to wait out a launch call that hasn't set the launch's nonce yet: then the wait
-    // sees the launch.
+    // would drop their songs. It never repairs. The state is read first, as for `am resume`: it
+    // waits out a launch call that hasn't set the launch's nonce yet, so the wait sees the
+    // launch, and names the engine the play waits on.
+    var waited_on: ?platform.ProcessId = null;
     if (p) |*x| {
-        _ = try host.state(r.arena);
+        if ((try host.state(a)).engine) |e| waited_on = e.pid;
         try host.page.waitOutInFlight(r, x);
-        if (!x.send()) return sendState(host, r, try freshSnapshot(host, r.arena));
+        if (!x.send()) return sendState(host, r, try freshSnapshot(host, a));
     }
-    const result = try enginePageCall(host, r, req.action.method(), args, timeout);
+    var called = try callEnginePage(host, r, req.action.method(), args, timeout);
+    // A launch since the wait (a relaunch) leaves the call no page: the play waits for that
+    // launch's page and calls once more.
+    if (p) |*x| switch (called) {
+        .answer => {},
+        .no_page => |e| if (try play.launchedSince(host, a, x, waited_on, e)) {
+            try host.page.waitOutInFlight(r, x);
+            if (!x.send()) return sendState(host, r, try freshSnapshot(host, a));
+            called = try callEnginePage(host, r, req.action.method(), args, timeout);
+        },
+    };
+    const result = switch (called) {
+        .answer => |json| json,
+        .no_page => return r.fail(not_running, .{}),
+    };
     if (p) |*x| x.end();
     // Methods answer with a fresh snapshot; anything else leaves the last report.
     try sendState(host, r, if (std.mem.startsWith(u8, result, "{")) result else null);
@@ -380,27 +396,44 @@ pub fn queueItems(host: Host, r: *Reply, req: ItemsRequest) Reply.Error!void {
 
 /// A call on the running engine page; `not_running` without one. Returns the result's JSON.
 fn enginePageCall(host: Host, r: *Reply, method: []const u8, args: []const u8, timeout: Io.Duration) Reply.Error![]const u8 {
+    return switch (try callEnginePage(host, r, method, args, timeout)) {
+        .answer => |json| json,
+        .no_page => r.fail(not_running, .{}),
+    };
+}
+
+/// What `callEnginePage` came to, short of a failure it ends the endpoint on.
+const PageCall = union(enum) {
+    /// The result's JSON.
+    answer: []const u8,
+    /// The page is still loading, or went away during the call.
+    no_page: Host.CallError,
+};
+
+/// As `enginePageCall`, but a call that found no page connected, or lost it, comes back for
+/// the caller to decide.
+fn callEnginePage(host: Host, r: *Reply, method: []const u8, args: []const u8, timeout: Io.Duration) Reply.Error!PageCall {
     const s = try host.state(r.arena);
     const engine = s.engine orelse return r.fail(not_running, .{});
     if (engine.signin_window) return r.fail(not_running, .{});
     const result = host.call(r.arena, method, args, timeout) catch |e| switch (e) {
-        // The page is still loading, or went away during the call.
-        error.NoEnginePage, error.Disconnected => return r.fail(not_running, .{}),
+        error.NoEnginePage, error.Disconnected => return .{ .no_page = e },
         error.Timeout => return r.fail("the engine page didn't answer {s} within {d} s", .{ method, timeout.toSeconds() }),
         error.Canceled => return error.Canceled,
         error.OutOfMemory => return error.OutOfMemory,
     };
-    return switch (result) {
+    const answer = switch (result) {
         .ok => |json| json,
         .page_error => |message| if (std.mem.eql(u8, message, nothing_queued))
-            r.fail(not_running, .{})
+            return r.fail(not_running, .{})
         else if (std.mem.eql(u8, message, stopped_before_start))
             // playNext/playLater on an empty queue, or a radio restart, that a stop cancelled:
             // the state after, not an error.
             try freshSnapshot(host, r.arena) orelse "null"
         else
-            r.fail("the engine page couldn't {s}: {s}", .{ method, message }),
+            return r.fail("the engine page couldn't {s}: {s}", .{ method, message }),
     };
+    return .{ .answer = answer };
 }
 
 /// The page's snapshot now; null when it doesn't answer with one.
@@ -891,11 +924,12 @@ const control_plays = [_]struct { []const u8, []const u8, ?[]const u8 }{
     .{ "{\"action\":\"play_later\",\"value\":{\"songs\":[\"1561837008\"]}}", "playLater", null },
 };
 
-/// What a control play from `control_plays` that waited for the launch got: its page call
-/// reached the launch's page load once it was ready, it made no repair and no launch of its own.
-fn expectLandedOnLaunch(rig: *fake.Rig, wire: Wire, method: []const u8, failure: ?[]const u8) !void {
+/// What a control play from `control_plays` that waited for a launch got: its page call reached
+/// the page load `load` once it was ready, it made no repair, and the engine was launched
+/// `launches` times, none by it.
+fn expectLandedOn(rig: *fake.Rig, wire: Wire, load: []const u8, launches: u32, method: []const u8, failure: ?[]const u8) !void {
     try testing.expectEqualStrings(starting_line ++ "\n", wire.out);
-    try testing.expect(rig.fp.calledOn("1", method));
+    try testing.expect(rig.fp.calledOn(load, method));
     if (failure) |message| {
         try testing.expectEqual(@as(u8, 1), wire.code);
         try testing.expectEqualStrings(message, wire.message.?);
@@ -904,7 +938,7 @@ fn expectLandedOnLaunch(rig: *fake.Rig, wire: Wire, method: []const u8, failure:
         try testing.expectEqual(playback.Music.starting, rig.fp.held());
     }
     try testing.expectEqual(@as(u32, 0), rig.fp.reloads + rig.fp.checks + rig.fp.probes);
-    try testing.expectEqual(@as(u32, 1), rig.launcher.launches);
+    try testing.expectEqual(launches, rig.launcher.launches);
 }
 
 test "Space, play-next and play-later during a launch in flight wait for its page, then make their page call instead of failing as not configured" {
@@ -927,7 +961,7 @@ test "Space, play-next and play-later during a launch in flight wait for its pag
         defer drop(&controlling);
         try c.printed(starting_line);
         rig.fp.release(held, .answer);
-        try expectLandedOnLaunch(&rig, try controlling.await(testing.io), method, failure);
+        try expectLandedOn(&rig, try controlling.await(testing.io), "1", 1, method, failure);
         try testing.expect((try starting.await(testing.io)).ready);
     };
 }
@@ -956,8 +990,28 @@ test "Space, play-next and play-later during the launch call, before it set the 
         rig.launcher.releaseLaunch();
         try c.printed(starting_line);
         rig.fp.release(.open, .answer);
-        try expectLandedOnLaunch(&rig, try controlling.await(testing.io), method, failure);
+        try expectLandedOn(&rig, try controlling.await(testing.io), "1", 1, method, failure);
         try testing.expect((try starting.await(testing.io)).ready);
+    }
+}
+
+test "Space, play-next and play-later whose page call finds the engine relaunched since their wait wait for the new launch's page and call it there" {
+    for (control_plays) |case| {
+        const body, const method, const failure = case;
+        var rig: fake.Rig = undefined;
+        rig.init(fake.Rig.patientLaunch(fake.Rig.timing));
+        defer rig.deinit();
+        var ph: fake.PageHost = .{ .rig = &rig };
+        try ph.warm();
+        // The wait finds nothing in flight; the relaunch comes as the call goes out.
+        ph.before_call = .{ .method = method, .run = fake.PageHost.relaunchNow };
+
+        const c = rig.caller();
+        var controlling = try testing.io.concurrent(runControlAs, .{ &ph, c, body });
+        defer drop(&controlling);
+        try c.printed(starting_line);
+        rig.fp.release(.open, .answer);
+        try expectLandedOn(&rig, try controlling.await(testing.io), "2", 2, method, failure);
     }
 }
 

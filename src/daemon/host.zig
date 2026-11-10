@@ -313,6 +313,16 @@ pub const Plays = struct {
             return true;
         }
 
+        /// The page call reached no page after all: none was connected, or the browser that got
+        /// it is gone. The play counts as unsent again until its next `send`, so a stop that
+        /// can't reach the page cancels it.
+        pub fn unsend(p: *Play) void {
+            const ps = p.plays;
+            ps.acquire();
+            defer ps.release();
+            if (p.slot) |i| ps.slots[i].sent = false;
+        }
+
         /// The page answered, or the play ended before it got there: no longer on its way.
         pub fn end(p: *Play) void {
             if (!p.open) return;

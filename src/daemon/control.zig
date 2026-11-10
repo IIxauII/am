@@ -37,47 +37,73 @@ pub fn control(host: Host, r: *Reply, action: Action) Reply.Error!void {
     const state = try host.state(a);
     const engine = state.engine orelse return r.fail("nothing to {t}: the engine isn't running", .{action});
     if (engine.signin_window) return r.fail("nothing to {t}: the engine isn't running (a sign-in window is open)", .{action});
-    // A resume looks at, and calls, the new page load, not a reload's gap. It never repairs.
-    if (resuming) |*p| {
-        try host.page.waitOutInFlight(r, p);
-        if (p.cancelled()) return r.print("{s}\n", .{play.stopped_before_start});
-    }
-    // A pause during a reload stops, as `stop` does then, without waiting on the page.
-    if (action == .pause and try host.page.reloadInFlight(a)) return replyDuringReload(r, action, cancelForReload(host, host.plays.beginStop()));
-    // Straight from the page: the last report can be a second old, from before a `stop`.
-    const before = try snapshot(host, r) orelse return r.fail("nothing to {t}: the engine page didn't answer", .{action});
-    // MusicKit drops stopped live radio; the page's resume queues the station again.
-    const station = if (action == .@"resume" and before.nowPlaying == null) before.stoppedLive else null;
-    if (before.nowPlaying == null and station == null) {
-        if (action == .pause) switch (before.music()) {
-            .playing, .starting => return pauseUnnamed(host, r, before),
-            .none, .paused, .stopped_live => {},
+    // A resume looks at, and calls, the new page load, not a reload's gap. It never repairs. A
+    // launch since its wait (a relaunch) leaves its look or its call no page: it then waits for
+    // that launch's page and starts over on it, once.
+    var retried = false;
+    while (true) {
+        if (resuming) |*p| {
+            try host.page.waitOutInFlight(r, p);
+            if (p.cancelled()) return r.print("{s}\n", .{play.stopped_before_start});
+        }
+        // A pause during a reload stops, as `stop` does then, without waiting on the page.
+        if (action == .pause and try host.page.reloadInFlight(a)) return replyDuringReload(r, action, cancelForReload(host, host.plays.beginStop()));
+        // Straight from the page: the last report can be a second old, from before a `stop`.
+        const before = try snapshot(host, r) orelse {
+            if (resuming) |*p| {
+                if (!retried and try play.launchedSince(host, a, p, engine.pid, null)) {
+                    retried = true;
+                    continue;
+                }
+            }
+            return r.fail("nothing to {t}: the engine page didn't answer", .{action});
         };
-        return r.fail("nothing to {t}: " ++ nothing_loaded, .{action});
-    }
+        // MusicKit drops stopped live radio; the page's resume queues the station again.
+        const station = if (action == .@"resume" and before.nowPlaying == null) before.stoppedLive else null;
+        if (before.nowPlaying == null and station == null) {
+            if (action == .pause) switch (before.music()) {
+                .playing, .starting => return pauseUnnamed(host, r, before),
+                .none, .paused, .stopped_live => {},
+            };
+            return r.fail("nothing to {t}: " ++ nothing_loaded, .{action});
+        }
 
-    const args = if (resuming) |p| try std.json.Stringify.valueAlloc(a, .{p.generation}, .{}) else "[]";
-    if (resuming) |*p| if (!p.send()) return r.print("{s}\n", .{play.stopped_before_start});
-    const result = try play.pageCall(host, r, @tagName(action), args, .fromSeconds(10));
-    if (resuming) |*p| p.end();
-    switch (result) {
-        .ok => {},
-        .page_error => |message| if (std.mem.eql(u8, message, play.stopped_before_start))
-            return r.print("{s}\n", .{play.stopped_before_start})
-        else
-            return r.fail("the engine page didn't {t}: {s}", .{ action, message }),
+        const args = if (resuming) |p| try std.json.Stringify.valueAlloc(a, .{p.generation}, .{}) else "[]";
+        if (resuming) |*p| if (!p.send()) return r.print("{s}\n", .{play.stopped_before_start});
+        const timeout: Io.Duration = .fromSeconds(10);
+        const result = host.call(a, @tagName(action), args, timeout) catch |e| switch (e) {
+            error.NoEnginePage, error.Disconnected => {
+                if (resuming) |*p| {
+                    if (!retried and try play.launchedSince(host, a, p, engine.pid, e)) {
+                        retried = true;
+                        continue;
+                    }
+                }
+                return play.failPageCall(r, e, @tagName(action), timeout);
+            },
+            else => return play.failPageCall(r, e, @tagName(action), timeout),
+        };
+        if (resuming) |*p| p.end();
+        switch (result) {
+            .ok => {},
+            .page_error => |message| if (std.mem.eql(u8, message, play.stopped_before_start))
+                return r.print("{s}\n", .{play.stopped_before_start})
+            else
+                return r.fail("the engine page didn't {t}: {s}", .{ action, message }),
+        }
+        // Done either way; without an answer the line shows the state from before.
+        const fresh = try snapshot(host, r);
+        const after = fresh orelse before;
+        if (after.nowPlaying orelse before.nowPlaying) |item|
+            try printItem(r, after, item)
+        else if (station) |s|
+            // Its stream still loads: MusicKit names no item yet.
+            try r.print("restarting live radio: {s}\n", .{s.name orelse s.id});
+        // A pending play() can start the music after the page's answer.
+        if (action == .pause) if (fresh) |f| if (f.music().plays())
+            return r.fail("the music still plays after {t}", .{action});
+        return;
     }
-    // Done either way; without an answer the line shows the state from before.
-    const fresh = try snapshot(host, r);
-    const after = fresh orelse before;
-    if (after.nowPlaying orelse before.nowPlaying) |item|
-        try printItem(r, after, item)
-    else if (station) |s|
-        // Its stream still loads: MusicKit names no item yet.
-        try r.print("restarting live radio: {s}\n", .{s.name orelse s.id});
-    // A pending play() can start the music after the page's answer.
-    if (action == .pause) if (fresh) |f| if (f.music().plays())
-        return r.fail("the music still plays after {t}", .{action});
 }
 
 const nothing_loaded = "nothing is loaded in the engine (am play loads a song)";
@@ -653,6 +679,57 @@ test "resume during a launch in flight waits for its page before it looks, never
         try testing.expectEqual(@as(u32, 0), rig.fp.reloads + rig.fp.checks + rig.fp.probes);
         try testing.expectEqual(@as(u32, 1), rig.launcher.launches);
     }
+}
+
+test "resume whose look or call finds the engine relaunched since its wait waits for the new launch's page and starts over on it" {
+    // The relaunch comes as the look goes out, or as the resume does after a look that found a
+    // paused song.
+    for ([_][]const u8{ "snapshot", "resume" }) |method| {
+        var rig: Rig = undefined;
+        rig.init(Rig.patientLaunch(patient));
+        defer rig.deinit();
+        var ph: PageHost = .{ .rig = &rig };
+        try holds(&ph, shy_away_at.paused(62));
+        ph.before_call = .{ .method = method, .run = PageHost.relaunchNow };
+
+        const c = rig.caller();
+        var resuming = try testing.io.concurrent(runControlAs, .{ &ph, c, Action.@"resume" });
+        defer drop(&resuming);
+        try c.printed(starting_line);
+        rig.fp.release(.open, .answer);
+
+        // The new page holds nothing: its look says so, not that no page answered.
+        const printed = try resuming.await(testing.io);
+        try testing.expectEqual(@as(u8, 1), printed.code);
+        try testing.expectEqualStrings(starting_line ++ "\n", printed.out);
+        try testing.expectEqualStrings("error: nothing to resume: " ++ nothing_loaded ++ "\n", printed.err);
+        try testing.expect(rig.fp.calledOn("2", "snapshot"));
+        try testing.expectEqual(@as(u32, 2), rig.launcher.launches);
+    }
+}
+
+test "a stop while a play waits for a relaunch it found after its wait cancels it: its call reached no page, and nothing is sent" {
+    var rig: Rig = undefined;
+    rig.init(Rig.patientLaunch(patient));
+    defer rig.deinit();
+    var ph: PageHost = .{ .rig = &rig };
+    try holds(&ph, shy_away_at.paused(62));
+    ph.before_call = .{ .method = "resume", .run = PageHost.relaunchNow };
+
+    const c = rig.caller();
+    var resuming = try testing.io.concurrent(runControlAs, .{ &ph, c, Action.@"resume" });
+    defer drop(&resuming);
+    try c.printed(starting_line);
+    // No page is connected: the stop cancels the plays whose call didn't go out.
+    const stopped = try runControl(&ph, .stop);
+    try testing.expectEqual(@as(u8, 0), stopped.code);
+
+    const printed = try resuming.await(testing.io);
+    try testing.expectEqual(@as(u8, 0), printed.code);
+    try testing.expectEqualStrings(starting_line ++ "\n" ++ play.stopped_before_start ++ "\n", printed.out);
+    rig.fp.release(.open, .answer);
+    try rig.fp.connected();
+    try testing.expect(!rig.fp.calledOn("2", "resume"));
 }
 
 test "pause calls the page's pause and prints the state after" {

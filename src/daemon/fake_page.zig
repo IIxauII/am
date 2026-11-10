@@ -1495,6 +1495,16 @@ pub const PageHost = struct {
         _ = try ph.rig.launcher.port().vtable.launch(&ph.rig.launcher, ph.rig.newArena(), .launch, &problem);
     }
 
+    /// A relaunch that has just happened: the browser of page load 1 is gone and its stream
+    /// closed, and the new launch's page waits to open. For `before_call`, as the page call of
+    /// a play that has already waited goes out.
+    pub fn relaunchNow(ph: *PageHost) !void {
+        ph.rig.launcher.stop();
+        try ph.rig.fp.streamClosed("1");
+        ph.rig.fp.hold(.open, 1);
+        try ph.launch();
+    }
+
     /// Waits until the endpoints asked for the state `n` times; fails after 2 s.
     pub fn askedState(ph: *PageHost, n: u32) !void {
         const deadline: Deadline = .after(ph.rig.io, .fromSeconds(2));

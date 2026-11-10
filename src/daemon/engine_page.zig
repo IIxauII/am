@@ -260,7 +260,8 @@ pub const Page = struct {
     ///
     /// Call it after reading the engine's state (`Host.state`). A launch shows on the channel
     /// only once its launch call has set its nonce, and the state waits out a launch call that
-    /// holds the engine before that.
+    /// holds the engine before that. A launch that comes after it returns (a relaunch) leaves
+    /// the page call no page: `play.launchedSince` tells, and the play waits again and retries.
     pub fn waitOutInFlight(pg: Page, r: *Reply, play: ?*const Plays.Play) Reply.Error!void {
         return pg.vtable.waitOutInFlight(pg.ptr, r, play);
     }

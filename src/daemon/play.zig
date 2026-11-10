@@ -272,6 +272,23 @@ pub fn failPageCall(r: *Reply, e: Host.CallError, method: []const u8, timeout: I
     };
 }
 
+/// After a control play's look or page call found no page (`failed`: the call's error, null for
+/// a look): whether another engine runs now than `waited_on`, the one the play waited out what
+/// was in flight on (null: none ran). Then a launch came since its wait, a relaunch or a launch
+/// call that held the engine just then, and the play waits for that launch's page
+/// (`Page.waitOutInFlight`) and tries once more. Reads the state, which waits out a launch call
+/// that still holds the engine. A call that never went out, or went to a browser that is gone,
+/// counts as unsent again (`Play.unsend`).
+pub fn launchedSince(host: Host, arena: Allocator, x: *Play, waited_on: ?platform.ProcessId, failed: ?Host.CallError) (Allocator.Error || Io.Cancelable)!bool {
+    if (failed) |e| if (e == error.NoEnginePage) x.unsend();
+    const s = try host.state(arena);
+    const engine = s.engine orelse return false;
+    if (engine.signin_window) return false;
+    if (waited_on) |pid| if (pid == engine.pid) return false;
+    x.unsend();
+    return true;
+}
+
 /// What a watch compares each look at the engine against.
 pub const Watching = struct {
     started_at: Io.Clock.Timestamp,
