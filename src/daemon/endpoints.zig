@@ -5,7 +5,7 @@
 //! 1. write `fn (d: *Daemon, r: *Reply, body: []const u8) Reply.Error!void` below, printing
 //!    with `r.print` and failing with `r.fail`; `body` is the JSON the CLI sent;
 //! 2. list it in `all`, with `.uses_engine = true` if it uses the engine (the idle close then
-//!    waits for it);
+//!    waits for it), or `.keeps_engine = true` if it only holds the engine open (keep-alive);
 //! 3. in `main.zig`, run it with `commands.remote.run(ctx, gpa, "<name>", body)`.
 const std = @import("std");
 const daemon = @import("../daemon.zig");

@@ -25,24 +25,19 @@ pub const Options = struct {
 /// Runs until its client goes or the daemon stops (`error.Canceled`).
 pub fn run(host: Host, io: Io, r: *Reply, options: Options) Reply.Error!void {
     var problem: []const u8 = "";
-    // Silent and not retried: the next play reports any error, as it does today.
+    // Silent and not retried: the next play reports any error.
     if (host.page.start(r.arena, &problem)) |_| {} else |e| switch (e) {
         error.EngineFailed => host.log("keep-alive: the engine didn't start: {s}", .{problem}),
         error.OutOfMemory, error.Canceled => |x| return x,
     }
     var beat: Io.Clock.Timestamp = .now(io, .awake);
-    while (!clientGone(r)) {
+    while (!r.clientGone()) {
         try io.sleep(options.step, .awake);
         if (beat.untilNow(io).raw.nanoseconds >= options.heartbeat.nanoseconds) {
             try r.data("{}");
             beat = .now(io, .awake);
         }
     }
-}
-
-fn clientGone(r: *const Reply) bool {
-    const gone = r.client_gone orelse return false;
-    return gone.load(.acquire);
 }
 
 const testing = std.testing;
@@ -113,17 +108,10 @@ fn pageReady(rig: *Rig) !void {
 /// Waits until the daemon's log has `line`; fails after 2 s.
 fn logged(ph: *PageHost, line: []const u8) !void {
     const deadline: Deadline = .after(ph.rig.io, .fromSeconds(2));
-    while (true) {
-        for (ph.logLines()) |l| if (std.mem.eql(u8, l, line)) return;
+    while (!ph.hasLogged(line)) {
         if (deadline.passed()) return error.NeverLogged;
         try testing.io.sleep(.fromMilliseconds(5), .awake);
     }
-}
-
-fn pageCalls(rig: *Rig) usize {
-    rig.fp.mutex.lockUncancelable(rig.io);
-    defer rig.fp.mutex.unlock(rig.io);
-    return rig.fp.called.items.len;
 }
 
 test "keep-engine launches the engine, printing nothing and repairing nothing, and stays open until its client goes" {
@@ -141,7 +129,7 @@ test "keep-engine launches the engine, printing nothing and repairing nothing, a
     try testing.expectEqual(@as(u8, 0), printed.code);
     try testing.expectEqualStrings("", printed.out);
     // Not even a look at the page: no repair.
-    try testing.expectEqual(@as(usize, 0), pageCalls(&rig));
+    try testing.expectEqual(@as(usize, 0), rig.fp.callCount());
     try testing.expectEqual(@as(usize, 0), ph.logLines().len);
 }
 
@@ -182,7 +170,7 @@ test "keep-engine holds an engine already running as it is and launches none aft
     try manySteps();
     try testing.expectEqual(@as(u32, 1), rig.launcher.launches);
     try testing.expectEqualStrings(load, rig.fp.current());
-    try testing.expectEqual(@as(usize, 0), pageCalls(&rig));
+    try testing.expectEqual(@as(usize, 0), rig.fp.callCount());
 
     // It exits on its own (or `am signin --engine` closes it): the supervisor stops it.
     rig.launcher.stop();

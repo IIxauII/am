@@ -187,18 +187,18 @@ pub const IdleTimer = struct {
         t.touch(now);
     }
 
-    /// What holds the engine open on a tick, besides the CLI requests in `busy`.
-    pub const Holds = struct {
+    /// The engine's use on a tick, besides the CLI requests in `busy`.
+    pub const Use = struct {
         /// Music plays, from the engine page's latest report.
         playing: bool = false,
         /// A keep-engine request is open (`Requests.keepers`).
-        kept: bool = false,
+        keep_alive: bool = false,
     };
 
     /// Call on every tick. Once nothing holds the engine, the limit counts from the last tick
     /// that something did.
-    pub fn expired(t: *IdleTimer, now: Io.Timestamp, holds: Holds) bool {
-        if (holds.playing or holds.kept or t.busy > 0) t.touch(now);
+    pub fn expired(t: *IdleTimer, now: Io.Timestamp, use: Use) bool {
+        if (use.playing or use.keep_alive or t.busy > 0) t.touch(now);
         return t.remaining(now).nanoseconds <= 0;
     }
 
@@ -342,6 +342,18 @@ pub const Requests = struct {
         return n;
     }
 
+    /// For `stop-if-unused`: whether `asker`'s own client holds a keep-engine request open,
+    /// noticed closing or not.
+    pub fn ownKeepAlive(q: *Requests, io: Io, asker: *const Ticket) bool {
+        q.mutex.lockUncancelable(io);
+        defer q.mutex.unlock(io);
+        var it = q.open;
+        while (it) |t| : (it = t.next) {
+            if (t.keeps_engine and t.sameClient(asker)) return true;
+        }
+        return false;
+    }
+
     /// Whether an open request besides `asker` is in use (see `Ticket.inUseFor`).
     pub fn othersInUse(q: *Requests, io: Io, asker: *const Ticket) bool {
         q.mutex.lockUncancelable(io);
@@ -380,6 +392,9 @@ pub const EngineView = struct {
     /// (`control.stopStarting`): a page still loading, or a report that still names a song
     /// starting, is on its way to nothing.
     own_play_stopped: bool = false,
+    /// The quitting TUI holds a keep-engine request, and nothing besides it uses the daemon: a
+    /// page still loading is that request's launch, on its way to nothing.
+    own_keep_alive: bool = false,
 };
 
 /// An engine page reports once a second; one silent for this long may be hung mid-song.
@@ -389,12 +404,13 @@ const stale_report_ms = 5000;
 /// included), a song starting or a queue on its way, a page still loading, a sign-in window
 /// open or a sign-in waiting, or a page that stopped reporting (it may be playing). A page
 /// loading or a song starting is nobody's once the quitting TUI's own play was stopped
-/// (`EngineView.own_play_stopped`).
+/// (`EngineView.own_play_stopped`), and a page loading is nobody's when the quitting TUI's own
+/// keep-alive launched it (`EngineView.own_keep_alive`).
 pub fn engineInUse(e: EngineView, signins_waiting: u32) ?[]const u8 {
     if (signins_waiting > 0) return "a sign-in is waiting";
     if (!e.running) return null;
     if (e.signin_window) return "a sign-in window is open";
-    const loading: ?[]const u8 = if (e.own_play_stopped) null else "the engine is loading";
+    const loading: ?[]const u8 = if (e.own_play_stopped or e.own_keep_alive) null else "the engine is loading";
     const r = e.report orelse return loading;
     if (!e.ready) return loading;
     if (e.report_age_ms > stale_report_ms) return "the engine page stopped reporting";
@@ -827,7 +843,7 @@ pub const Daemon = struct {
             const report = playback.parseReport(arena, last.json) orelse break :blk false;
             break :blk report.music().keepsEngineOpen();
         };
-        if (d.idle.expired(d.now(), .{ .playing = playing, .kept = d.keepEngineRequestsLocked() > 0 })) {
+        if (d.idle.expired(d.now(), .{ .playing = playing, .keep_alive = d.keepEngineRequestsLocked() > 0 })) {
             d.log("nothing played for {d} min: closing the engine", .{@divFloor(d.idle.limit.toSeconds(), 60)});
             d.stopEngineLocked();
         }
@@ -1052,6 +1068,9 @@ pub const Daemon = struct {
         defer d.engine_mutex.unlock(d.io);
         var view = try d.engineViewLocked(arena);
         view.own_play_stopped = own_play_stopped;
+        // Nothing else uses the daemon and no play is on its way: a page still loading is the
+        // launch of the quitting TUI's own keep-alive.
+        view.own_keep_alive = d.requests.ownKeepAlive(d.io, asker);
         if (view.running and view.ready) if (fresh) |report| {
             view.report = report;
             view.report_age_ms = 0;
@@ -1577,10 +1596,10 @@ test "a CLI request that uses the engine keeps it open for as long as it runs" {
 test "a keep-engine request holds the idle close while it is open; once none does, the idle limit runs from then" {
     var timer: IdleTimer = .{ .limit = .fromSeconds(60), .last_active = at(0) };
     // A TUI with keep-alive on holds the engine from 0:10 for an hour, nothing playing.
-    try testing.expect(!timer.expired(at(10), .{ .kept = true }));
-    try testing.expect(!timer.expired(at(1800), .{ .kept = true }));
-    try testing.expect(!timer.expired(at(3600), .{ .kept = true }));
-    // None holds it from 1:00:00: today's idle rules, from then.
+    try testing.expect(!timer.expired(at(10), .{ .keep_alive = true }));
+    try testing.expect(!timer.expired(at(1800), .{ .keep_alive = true }));
+    try testing.expect(!timer.expired(at(3600), .{ .keep_alive = true }));
+    // None holds it from 1:00:00: the idle limit counts from then.
     try testing.expect(!timer.expired(at(3659), .{}));
     try testing.expectEqual(@as(i64, 1), timer.remaining(at(3659)).toSeconds());
     try testing.expect(timer.expired(at(3660), .{}));
@@ -1626,7 +1645,7 @@ test "the keep-engine requests open are counted while their client is there: two
     try testing.expect(q.begin(io, at(2), &first));
     try testing.expect(q.begin(io, at(3), &second));
     try testing.expectEqual(@as(u32, 2), q.keepers(io));
-    // The first TUI quits: its request isn't kept from then, before it ends.
+    // The first TUI quits: its request no longer holds the engine, before it ends.
     first_gone.store(true, .release);
     try testing.expectEqual(@as(u32, 1), q.keepers(io));
     q.end(io, at(4), &first);
@@ -1834,6 +1853,26 @@ test "stop-if-unused: the quitting TUI's own keep-engine request isn't counted o
     try testing.expect(q.closeIfAlone(io, &asker));
 }
 
+test "stop-if-unused: the quitting TUI holds keep-alive when a keep-engine request names its client, whether or not its close was noticed" {
+    const io = testing.io;
+    var q = requestsAt(0);
+    var gone: std.atomic.Value(bool) = .init(true);
+    var other: Requests.Ticket = .{ .client_id = "fedcba9876543210", .keeps_engine = true };
+    var anonymous: Requests.Ticket = .{ .keeps_engine = true };
+    var own_watch: Requests.Ticket = .{ .client_id = "0123456789abcdef" };
+    var asker: Requests.Ticket = .{ .client_id = "0123456789abcdef" };
+    try testing.expect(q.begin(io, at(1), &other));
+    try testing.expect(q.begin(io, at(2), &anonymous));
+    try testing.expect(q.begin(io, at(3), &own_watch));
+    try testing.expect(q.begin(io, at(4), &asker));
+    try testing.expect(!q.ownKeepAlive(io, &asker));
+    var own: Requests.Ticket = .{ .client_gone = &gone, .client_id = "0123456789abcdef", .keeps_engine = true };
+    try testing.expect(q.begin(io, at(5), &own));
+    try testing.expect(q.ownKeepAlive(io, &asker));
+    q.end(io, at(6), &own);
+    try testing.expect(!q.ownKeepAlive(io, &asker));
+}
+
 fn endLater(q: *Requests, t: *Requests.Ticket) Io.Cancelable!void {
     try testing.io.sleep(.fromMilliseconds(50), .awake);
     q.end(testing.io, at(3), t);
@@ -1883,6 +1922,28 @@ test "once the quitting TUI's own play is stopped, a page still loading or a son
     var window = stopped;
     window.signin_window = true;
     try testing.expectEqualStrings("a sign-in window is open", engineInUse(window, 0).?);
+}
+
+test "a page still loading for the quitting TUI's own keep-alive keeps nothing; music playing, a song starting or a silent page still does" {
+    const own: EngineView = .{ .running = true, .own_keep_alive = true };
+    try testing.expectEqual(null, engineInUse(own, 0));
+    var not_ready = own;
+    not_ready.report = .{ .state = .none };
+    try testing.expectEqual(null, engineInUse(not_ready, 0));
+    var ready = own;
+    ready.ready = true;
+    ready.report = .{ .state = .none };
+    try testing.expectEqual(null, engineInUse(ready, 0));
+    var playing = ready;
+    playing.report = .{ .state = .playing };
+    try testing.expectEqualStrings("music is playing", engineInUse(playing, 0).?);
+    var starting = ready;
+    starting.report = .{ .state = .loading };
+    try testing.expectEqualStrings("a song is starting", engineInUse(starting, 0).?);
+    var silent = ready;
+    silent.report_age_ms = 9000;
+    try testing.expectEqualStrings("the engine page stopped reporting", engineInUse(silent, 0).?);
+    try testing.expectEqualStrings("a sign-in is waiting", engineInUse(own, 1).?);
 }
 
 test "the browser comes from its path setting, else the first candidate found, looked up on PATH if it's a name" {

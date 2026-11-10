@@ -398,6 +398,13 @@ pub const FakePage = struct {
         return false;
     }
 
+    /// How many page calls reached any page load so far.
+    pub fn callCount(fp: *FakePage) usize {
+        fp.mutex.lockUncancelable(fp.io);
+        defer fp.mutex.unlock(fp.io);
+        return fp.called.items.len;
+    }
+
     /// Waits at `op`'s gate when this is the held one, and says how it was released. A held
     /// `.open` counts as reached for the load `index`. A load whose launch ended goes on at once,
     /// silent: its browser is gone.
@@ -1459,6 +1466,14 @@ pub const PageHost = struct {
         ph.mutex.lockUncancelable(ph.rig.io);
         defer ph.mutex.unlock(ph.rig.io);
         return ph.logged.items;
+    }
+
+    /// Whether the daemon's log has `line` so far; fine while callers still run.
+    pub fn hasLogged(ph: *PageHost, line: []const u8) bool {
+        ph.mutex.lockUncancelable(ph.rig.io);
+        defer ph.mutex.unlock(ph.rig.io);
+        for (ph.logged.items) |l| if (std.mem.eql(u8, l, line)) return true;
+        return false;
     }
 
     fn of(ptr: *anyopaque) *PageHost {

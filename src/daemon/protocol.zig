@@ -44,6 +44,12 @@ pub const Reply = struct {
         WriteFailed,
     } || Allocator.Error || Io.Cancelable;
 
+    /// The server noticed the CLI close its end; false when it can't tell (`client_gone` null).
+    pub fn clientGone(r: *const Reply) bool {
+        const gone = r.client_gone orelse return false;
+        return gone.load(.acquire);
+    }
+
     /// Text for the CLI's stdout, sent at once.
     pub fn print(r: *Reply, comptime fmt: []const u8, args: anytype) Error!void {
         if (r.hung_up) return;
