@@ -7,9 +7,9 @@
 //! close at once, as the server's do.
 //!
 //! It answers `snapshot`, `checkDeveloperToken`, `drmProbe`, `reload`, the four play calls,
-//! `pause`, `resume` and `stop` as app.js does, errors in app.js's `errText` form; any other
-//! method gets app.js's error for an unknown one. What MusicKit itself does (a pause that never
-//! settles, a seek that doesn't land, a step it rejects) is the test's `World`.
+//! `pause`, `resume`, `toggle` and `stop` as app.js does, errors in app.js's `errText` form; any
+//! other method gets app.js's error for an unknown one. What MusicKit itself does (a pause that
+//! never settles, a seek that doesn't land, a step it rejects) is the test's `World`.
 //!
 //! Each page load is a task, and each command a handler of its own, as app.js runs every event
 //! stream message's handler at once. A test forces an interleaving with gates: `hold` makes the
@@ -202,7 +202,7 @@ pub const FakePage = struct {
         notice,
         /// The answer to `play`, `playQueue`, `playNext` and `playLater`.
         play_queue,
-        /// The answers to `pause`, `resume` and `stop`, decided once released.
+        /// The answers to `pause`, `resume` (and `toggle`) and `stop`, decided once released.
         pause,
         @"resume",
         stop,
@@ -686,13 +686,14 @@ pub const FakePage = struct {
             .play_queue
         else if (std.mem.eql(u8, method, "pause"))
             .pause
-        else if (std.mem.eql(u8, method, "resume"))
+        else if (std.mem.eql(u8, method, "resume") or std.mem.eql(u8, method, "toggle"))
             .@"resume"
         else if (std.mem.eql(u8, method, "stop"))
             .stop
         else
             return try a.print("\"ok\":false,\"error\":\"TypeError | am[method] is not a function: {s}\"", .{method});
 
+        const toggle = std.mem.eql(u8, method, "toggle");
         // A play call or a resume runs in app.js `load` from the moment it is asked until it
         // answers: a stop meanwhile cancels it.
         var play_call: ?u64 = null;
@@ -703,7 +704,8 @@ pub const FakePage = struct {
             const load = &fp.loads.items[index];
             if (load.phase == .unloaded) return null;
             try fp.called.append(fp.gpa, .{ .load = load.id, .method = try fp.arena.allocator().dupe(u8, method) });
-            if (op == .play_queue or op == .@"resume") {
+            // A toggle on music that plays is a pause, which isn't a load.
+            if (op == .play_queue or (op == .@"resume" and !(toggle and load.music == .playing))) {
                 fp.next_play_call += 1;
                 play_call = fp.next_play_call;
                 try fp.play_calls.append(fp.gpa, .{ .id = fp.next_play_call, .index = index, .gen = gen orelse load.cancelled_below });
@@ -760,7 +762,7 @@ pub const FakePage = struct {
                 load.position = 0;
                 return try answerOf(a, load.*, &.{}, null);
             },
-            .@"resume" => try fp.resumeLocked(a, index, call_gen, cancelled),
+            .@"resume" => if (toggle) try fp.toggleLocked(a, index, call_gen, cancelled) else try fp.resumeLocked(a, index, call_gen, cancelled),
             .pause => try fp.pauseLocked(a, load),
             .stop => try fp.stopLocked(a, index, gen),
             else => asked,
@@ -821,6 +823,17 @@ pub const FakePage = struct {
             .playing, .none => {},
         }
         return answerOf(a, load.*, gave_up.slice(), null);
+    }
+
+    /// app.js `toggle` (Space): music that plays pauses, and anything else resumes, once
+    /// something is queued. A new page load has nothing queued.
+    fn toggleLocked(fp: *FakePage, a: Allocator, index: usize, gen: u64, cancelled: bool) Allocator.Error![]const u8 {
+        const load = &fp.loads.items[index];
+        if (try requireMusicFor(load, gen)) |err| return err;
+        if (load.music == .playing) return fp.pauseLocked(a, load);
+        // app.js `requireQueue`: stopped live radio counts as queued.
+        if (load.music == .none) return nothing_queued;
+        return fp.resumeLocked(a, index, gen, cancelled);
     }
 
     /// app.js `pause`: live radio can't pause, it stops.
@@ -963,6 +976,8 @@ pub const FakePage = struct {
     const not_configured = "\"ok\":false,\"error\":\"Error | MusicKit is not configured yet\"";
     /// app.js `STOPPED_BEFORE_START`, thrown as a plain object: its `errText` is the message.
     const stopped_before_start = "\"ok\":false,\"error\":\"stopped before it started\"";
+    /// app.js `NOTHING_QUEUED`, thrown the same way: a play or toggle on an empty queue.
+    const nothing_queued = "\"ok\":false,\"error\":\"nothing-queued\"";
 
     /// The page goes down and a new load starts on the same nonce. A second reload sent to the
     /// same load finds it gone.
@@ -1308,11 +1323,12 @@ pub const Caller = struct {
     }
 
     /// A play that makes no repair (Space, `am resume`, play-next, play-later): begins, joins a
-    /// reload in flight, sends `method` over the channel, and ends once the page answered.
+    /// launch and a reload in flight, sends `method` over the channel, and ends once the page
+    /// answered.
     pub fn controlPlay(c: *Caller, method: []const u8) !void {
         var p = c.rig.plays.begin();
         defer p.end();
-        try c.rig.page.page().joinReload(&c.t.reply, &p);
+        try c.rig.page.page().joinInFlight(&c.t.reply, &p);
         try c.rig.sendMusic(&p, method);
     }
 

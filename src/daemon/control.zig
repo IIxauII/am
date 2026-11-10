@@ -39,7 +39,7 @@ pub fn control(host: Host, r: *Reply, action: Action) Reply.Error!void {
     if (engine.signin_window) return r.fail("nothing to {t}: the engine isn't running (a sign-in window is open)", .{action});
     // A resume looks at, and calls, the new page load, not a reload's gap. It never repairs.
     if (resuming) |*p| {
-        try host.page.joinReload(r, p);
+        try host.page.joinInFlight(r, p);
         if (p.cancelled()) return r.print("{s}\n", .{play.stopped_before_start});
     }
     // A pause during a reload stops, as `stop` does then, without waiting on the page.
@@ -614,6 +614,41 @@ test "a resume that a stop cancels while it joins a reload calls nothing on the 
     try testing.expect(try rig.page.page().reloadInFlight(rig.newArena()));
     rig.fp.release(.configure, .answer);
     _ = try doctoring.await(testing.io);
+}
+
+/// What the engine page module prints while a control play waits on a launch in flight.
+const starting_line = "waiting for the engine to finish starting";
+
+test "resume during a launch in flight waits for its page before it looks, never repairs, and answers from the ready page" {
+    var timing = patient;
+    timing.launch_wait = .fromSeconds(30);
+    var rig: Rig = undefined;
+    rig.init(timing);
+    defer rig.deinit();
+    var ph: PageHost = .{ .rig = &rig };
+    // `am play` launches the engine; its page hasn't connected yet.
+    rig.fp.hold(.open, 1);
+    var problem: []const u8 = "";
+    var starting = try testing.io.concurrent(@import("engine_page.zig").EnginePage.start, .{ &rig.page, rig.newArena(), &problem });
+    defer drop(&starting);
+    try rig.fp.arrived(.open);
+
+    const c = rig.caller();
+    var resuming = try testing.io.concurrent(runControlAs, .{ &ph, c, Action.@"resume" });
+    defer drop(&resuming);
+    try c.printed(starting_line);
+    rig.fp.release(.open, .answer);
+
+    const printed = try resuming.await(testing.io);
+    // A new page holds nothing: its look reached the page once it was ready, so the reason
+    // isn't that the page didn't answer.
+    try testing.expectEqual(@as(u8, 1), printed.code);
+    try testing.expectEqualStrings(starting_line ++ "\n", printed.out);
+    try testing.expectEqualStrings("error: nothing to resume: " ++ nothing_loaded ++ "\n", printed.err);
+    try testing.expect(rig.fp.calledOn("1", "snapshot"));
+    try testing.expect((try starting.await(testing.io)).ready);
+    try testing.expectEqual(@as(u32, 0), rig.fp.reloads + rig.fp.checks + rig.fp.probes);
+    try testing.expectEqual(@as(u32, 1), rig.launcher.launches);
 }
 
 test "pause calls the page's pause and prints the state after" {

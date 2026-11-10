@@ -336,7 +336,7 @@ pub fn control(host: Host, r: *Reply, req: ControlRequest) Reply.Error!void {
     // A play makes its page call on the new page load, not in a reload's gap, where it would
     // fail as not running and play-next or play-later would drop their songs. It never repairs.
     if (p) |*x| {
-        try host.page.joinReload(r, x);
+        try host.page.joinInFlight(r, x);
         if (!x.send()) return sendState(host, r, try freshSnapshot(host, r.arena));
     }
     const result = try enginePageCall(host, r, req.action.method(), args, timeout);
@@ -415,6 +415,7 @@ fn sendState(host: Host, r: *Reply, snapshot: ?[]const u8) Reply.Error!void {
 }
 
 const testing = std.testing;
+const fake = @import("fake_page.zig");
 const Fake = host_mod.Fake;
 const CallResult = @import("channel.zig").Channel.CallResult;
 
@@ -864,6 +865,76 @@ test "a play-next that a stop cancels while it joins a reload sends nothing, and
     try testing.expectEqual(@as(u8, 0), wire.code);
     try testing.expect(!f.wasCalled("playNext"));
     try testing.expectEqual(@as(usize, 1), wire.data.len);
+}
+
+/// `control` as the TUI sends it, with `c`'s reply, which says what it printed as it goes
+/// (`Caller.printed`).
+fn runControlAs(ph: *fake.PageHost, c: *fake.Caller, body: []const u8) !Wire {
+    const a = c.t.reply.arena;
+    const req = try std.json.parseFromSliceLeaky(ControlRequest, a, body, .{ .ignore_unknown_fields = true });
+    return runEndpoint(a, control(ph.host(), &c.t.reply, req), &c.t);
+}
+
+/// What the engine page module prints while a control play waits on a launch in flight.
+const starting_line = "waiting for the engine to finish starting";
+
+test "Space, play-next and play-later during a launch in flight wait for its page, then make their page call instead of failing as not configured" {
+    var timing = fake.Rig.timing;
+    timing.launch_wait = .fromSeconds(30);
+    const cases = [_]struct { []const u8, []const u8, ?[]const u8 }{
+        // A new page has nothing queued: the TUI queues its music again from its resume point.
+        .{ "{\"action\":\"toggle\"}", "toggle", not_running },
+        .{ "{\"action\":\"play_next\",\"value\":{\"songs\":[\"1561837008\"]}}", "playNext", null },
+        .{ "{\"action\":\"play_later\",\"value\":{\"songs\":[\"1561837008\"]}}", "playLater", null },
+    };
+    // Before the page connected, and while its MusicKit configures.
+    for ([_]fake.FakePage.Op{ .open, .configure }) |held| for (cases) |case| {
+        const body, const method, const failure = case;
+        var rig: fake.Rig = undefined;
+        rig.init(timing);
+        defer rig.deinit();
+        var ph: fake.PageHost = .{ .rig = &rig };
+        // `am play` or the TUI's queue launches the engine and waits for its page.
+        rig.fp.hold(held, 1);
+        var problem: []const u8 = "";
+        var starting = try testing.io.concurrent(engine_page.EnginePage.start, .{ &rig.page, rig.newArena(), &problem });
+        defer drop(&starting);
+        try rig.fp.arrived(held);
+
+        const c = rig.caller();
+        var controlling = try testing.io.concurrent(runControlAs, .{ &ph, c, body });
+        defer drop(&controlling);
+        try c.printed(starting_line);
+        rig.fp.release(held, .answer);
+        const wire = try controlling.await(testing.io);
+        try testing.expectEqualStrings(starting_line ++ "\n", wire.out);
+        try testing.expect(rig.fp.calledOn("1", method));
+        if (failure) |message| {
+            try testing.expectEqual(@as(u8, 1), wire.code);
+            try testing.expectEqualStrings(message, wire.message.?);
+        } else {
+            try testing.expectEqual(@as(u8, 0), wire.code);
+            try testing.expectEqual(playback.Music.starting, rig.fp.held());
+        }
+        // No repair, and no launch of its own.
+        try testing.expect((try starting.await(testing.io)).ready);
+        try testing.expectEqual(@as(u32, 0), rig.fp.reloads + rig.fp.checks + rig.fp.probes);
+        try testing.expectEqual(@as(u32, 1), rig.launcher.launches);
+    };
+
+    // With no engine there is no launch to wait for: Space fails at once, for the TUI to queue.
+    var rig: fake.Rig = undefined;
+    rig.init(timing);
+    defer rig.deinit();
+    var ph: fake.PageHost = .{ .rig = &rig };
+    const wire = try runControlAs(&ph, rig.caller(), "{\"action\":\"toggle\"}");
+    try testing.expectEqualStrings("", wire.out);
+    try testing.expectEqualStrings(not_running, wire.message.?);
+    try testing.expectEqual(@as(u32, 0), rig.launcher.launches);
+}
+
+fn drop(future: anytype) void {
+    if (future.cancel(testing.io)) |_| {} else |_| {}
 }
 
 test "a control call the page never answers is in the daemon's log by method and timeout" {
