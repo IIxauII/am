@@ -592,6 +592,19 @@ async function stopLive(late) {
   await settle(late, 'stop()', music.stop())
 }
 
+// Before a station. As a station replaces a song, MusicKit stop()s the song's player, and on a
+// song past 0:00 (playing, or paused mid-way) that keeps Firefox at ~120 % CPU until a page reload
+// or the next song (macOS, Firefox 159). On one paused at 0:00, as `am stop` leaves it, it doesn't.
+// So a loaded song is paused and rewound first, as a stop does it and within its bounds. Live radio
+// plays in a player of its own and can't pause. A give-up doesn't fail the station: it goes into
+// `late`, and a song still playing after the pause isn't sought; the station replaces it as before.
+async function rewindSong(late) {
+  if (!music.nowPlayingItem || isLive()) return
+  await pauseNow(late)
+  await until(notPlaying)
+  if (!music.isPlaying && music.currentPlaybackTime !== 0) await settle(late, 'seekToTime(0)', music.seekToTime(0))
+}
+
 // A pause or stop that leaves MusicKit playing failed, whatever its steps answered: it throws, with
 // what it gave up on first (the daemon logs page errors that start "gave up waiting on").
 function requireSilent(late, step) {
@@ -829,21 +842,23 @@ const am = {
     return load(gen, async (ctx) => {
       const { check, playing, takeMusic } = ctx
       if (req.station || req.stationFor) {
+        const [kind, id] = req.station ? ['station', req.station] : req.stationFor.song ? ['song', req.stationFor.song] : ['artist', req.stationFor.artist]
+        if (!id) throw new Error('stationFor needs a song or an artist')
         await takeMusic()
+        const late = []
+        await rewindSong(late)
+        await check()
         music.autoplayEnabled = autoplay
         stoppedLive = null
         if (req.station) {
-          context = { type: 'stations', id: req.station, name: null }
-          await music.setQueue({ station: req.station })
+          context = { type: 'stations', id, name: null }
+          await music.setQueue({ station: id })
         } else {
-          const [kind, id] = req.stationFor.song ? ['song', req.stationFor.song] : ['artist', req.stationFor.artist]
-          if (!id) throw new Error('stationFor needs a song or an artist')
           context = null
           await music.setStationQueue({ [kind]: id })
         }
         await check()
         keepVolume()
-        const late = []
         await settle(late, 'play()', playing(music.play()), START_MS)
         await check()
         return answer(late)
