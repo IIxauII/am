@@ -247,14 +247,16 @@ pub fn saveChange(io: Io, arena: Allocator, config_dir: []const u8, change: Chan
 fn writeSettingsFile(io: Io, arena: Allocator, config_dir: []const u8, text: []const u8) !void {
     const path = try Io.Dir.path.join(arena, &.{ config_dir, config.file.settings });
     const linked = if (Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = false })) |s| s.kind == .sym_link else |_| false;
-    // A dangling link is replaced by am's own file. One that can't be followed for another reason
-    // (a loop, a platform without realpath) stays as it is, and the save fails.
-    const target = if (linked) Io.Dir.cwd().realPathFileAlloc(io, path, arena) catch |e| switch (e) {
-        error.FileNotFound => null,
+    if (!linked) return platform.writePrivateFile(io, config_dir, config.file.settings, text);
+    // A dangling link is replaced by am's own file. The stat that follows the link decides that,
+    // not realpath: without /proc, Linux's realpath fails with FileNotFound on a good link too. A
+    // link that can't be followed for another reason (a loop, realpath failing) stays as it is,
+    // and the save fails.
+    const permissions = if (Io.Dir.cwd().statFile(io, path, .{})) |s| s.permissions else |e| switch (e) {
+        error.FileNotFound => return platform.writePrivateFile(io, config_dir, config.file.settings, text),
         else => |other| return other,
-    } else null;
-    const t = target orelse return platform.writePrivateFile(io, config_dir, config.file.settings, text);
-    const permissions = (try Io.Dir.cwd().statFile(io, t, .{})).permissions;
+    };
+    const t = try Io.Dir.cwd().realPathFileAlloc(io, path, arena);
     var dir = try Io.Dir.cwd().openDir(io, Io.Dir.path.dirname(t) orelse return error.FileNotFound, .{});
     defer dir.close(io);
     var file = try dir.createFileAtomic(io, Io.Dir.path.basename(t), .{ .permissions = permissions, .replace = true });
@@ -941,7 +943,7 @@ test "a settings.json link am can't follow stays a link and the save fails; a da
     var buf: [Io.Dir.max_path_bytes]u8 = undefined;
     const dir = buf[0..try tmp.dir.realPath(io, &buf)];
 
-    // A loop: realpath can't follow it, so the link is never replaced.
+    // A loop can't be followed, so the link is never replaced.
     try tmp.dir.symLink(io, "loop.json", "settings.json", .{});
     try tmp.dir.symLink(io, "settings.json", "loop.json", .{});
     try testing.expectError(error.SymLinkLoop, writeSettingsFile(io, a, dir, "{}\n"));
