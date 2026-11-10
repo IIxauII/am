@@ -187,7 +187,9 @@ fn tuiFrom(arena: Allocator, images: ?Images, file: Object) Allocator.Error!Tui 
     };
     if (object.get("artwork")) |v| {
         t.artwork = parseArtwork(v) orelse a: {
-            try problems.append(arena, try arena.print("artwork in settings.json must be \"images\", \"blocks\" or \"off\", not {f}: showing images", .{std.json.fmt(v, .{})}));
+            // What am uses instead: AM_IMAGES's pick (below) when it is set, else the default.
+            const instead = if (images != null) "AM_IMAGES" else "images";
+            try problems.append(arena, try arena.print("artwork in settings.json must be \"images\", \"blocks\" or \"off\", not {f}: using {s}", .{ std.json.fmt(v, .{}), instead }));
             break :a .images;
         };
     }
@@ -245,10 +247,11 @@ pub fn saveChange(io: Io, arena: Allocator, config_dir: []const u8, change: Chan
 fn writeSettingsFile(io: Io, arena: Allocator, config_dir: []const u8, text: []const u8) !void {
     const path = try Io.Dir.path.join(arena, &.{ config_dir, config.file.settings });
     const linked = if (Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = false })) |s| s.kind == .sym_link else |_| false;
-    // A dangling link, or one that can't be followed, is replaced by am's own file.
+    // A dangling link is replaced by am's own file. One that can't be followed for another reason
+    // (a loop, a platform without realpath) stays as it is, and the save fails.
     const target = if (linked) Io.Dir.cwd().realPathFileAlloc(io, path, arena) catch |e| switch (e) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => null,
+        error.FileNotFound => null,
+        else => |other| return other,
     } else null;
     const t = target orelse return platform.writePrivateFile(io, config_dir, config.file.settings, text);
     const permissions = (try Io.Dir.cwd().statFile(io, t, .{})).permissions;
@@ -724,10 +727,10 @@ test "parseTui: settings.json's defaults, a bad artwork value, unknown entries, 
         .{ .file = "{\"artwork\": \"Blocks\"}\n", .want = .{ .artwork = .blocks } },
         // A bad value falls back to images, with a problem that names it.
         .{ .file = "{\"artwork\": \"kitty\"}\n", .want = .{ .artwork = .images, .problems = &.{
-            "artwork in settings.json must be \"images\", \"blocks\" or \"off\", not \"kitty\": showing images",
+            "artwork in settings.json must be \"images\", \"blocks\" or \"off\", not \"kitty\": using images",
         } } },
         .{ .file = "{\"artwork\": false}\n", .want = .{ .artwork = .images, .problems = &.{
-            "artwork in settings.json must be \"images\", \"blocks\" or \"off\", not false: showing images",
+            "artwork in settings.json must be \"images\", \"blocks\" or \"off\", not false: using images",
         } } },
         // Entries am doesn't know (a later am's) are no problem.
         .{ .file = "{\"keepEngine\": true, \"keys\": {\"lists\": {\"help\": [\"x\"]}}, \"artwork\": \"off\", \"later\": 1.50}", .want = .{ .artwork = .off } },
@@ -739,9 +742,12 @@ test "parseTui: settings.json's defaults, a bad artwork value, unknown entries, 
         .{ .images = .placeholders, .want = .{ .artwork = .images, .images = .placeholders, .images_set = true } },
         // Images then means the protocol AM_IMAGES names, also after v went to blocks (#12).
         .{ .images = .placements, .file = "{\"artwork\": \"blocks\"}", .want = .{ .artwork = .images, .images = .placements, .images_set = true } },
-        // The file's bad entry is still named.
+        // The file's bad entry is still named, with AM_IMAGES, not images, used instead.
         .{ .images = .blocks, .file = "{\"artwork\": \"big\"}", .want = .{ .artwork = .blocks, .images_set = true, .problems = &.{
-            "artwork in settings.json must be \"images\", \"blocks\" or \"off\", not \"big\": showing images",
+            "artwork in settings.json must be \"images\", \"blocks\" or \"off\", not \"big\": using AM_IMAGES",
+        } } },
+        .{ .images = .off, .file = "{\"artwork\": 3}", .want = .{ .artwork = .off, .images_set = true, .problems = &.{
+            "artwork in settings.json must be \"images\", \"blocks\" or \"off\", not 3: using AM_IMAGES",
         } } },
         // A file that isn't valid JSON: the defaults, and am never writes it.
         .{ .file = "{\n  \"artwork\": \"off\",\n}\n", .want = .{ .artwork = .images, .unwritable = "settings.json isn't valid JSON", .problems = &.{
@@ -922,6 +928,33 @@ test "saveChange on a settings.json that links elsewhere (dotfiles) writes the f
     try testing.expectEqualStrings("{\n  \"artwork\": \"blocks\"\n}\n", try tmp.dir.readFileAlloc(io, "dotfiles/am.json", a, .limited(4096)));
     // The file it points to keeps its own permissions.
     try testing.expectEqual(@as(u32, 0o600), (try tmp.dir.statFile(io, "dotfiles/am.json", .{})).permissions.toMode() & 0o777);
+}
+
+test "a settings.json link am can't follow stays a link and the save fails; a dangling one becomes am's own file" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(io, &buf)];
+
+    // A loop: realpath can't follow it, so the link is never replaced.
+    try tmp.dir.symLink(io, "loop.json", "settings.json", .{});
+    try tmp.dir.symLink(io, "settings.json", "loop.json", .{});
+    try testing.expectError(error.SymLinkLoop, writeSettingsFile(io, a, dir, "{}\n"));
+    try testing.expectEqual(Io.File.Kind.sym_link, (try tmp.dir.statFile(io, "settings.json", .{ .follow_symlinks = false })).kind);
+    var link: [Io.Dir.max_path_bytes]u8 = undefined;
+    try testing.expectEqualStrings("loop.json", link[0..try tmp.dir.readLink(io, "settings.json", &link)]);
+
+    // A link whose file is gone holds nothing: the save writes am's own file in its place.
+    try tmp.dir.deleteFile(io, "settings.json");
+    try tmp.dir.symLink(io, "gone/am.json", "settings.json", .{});
+    try testing.expectEqual(Saved.saved, try saveChange(io, a, dir, .{ .artwork = .blocks }));
+    try testing.expectEqual(Io.File.Kind.file, (try tmp.dir.statFile(io, "settings.json", .{ .follow_symlinks = false })).kind);
+    try testing.expectEqualStrings("{\n  \"artwork\": \"blocks\"\n}\n", try tmp.dir.readFileAlloc(io, "settings.json", a, .limited(4096)));
 }
 
 test "the daemon starts with AM_PORT, ENGINE and ENGINE_IDLE_MINUTES, or refuses over the first bad one" {

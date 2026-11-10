@@ -361,8 +361,15 @@ pub const App = struct {
         app.ui.artwork = .{
             .setting = app.tui_settings.artwork,
             .session_only = app.tui_settings.artworkSessionOnly(),
-            .fallback = graphics.fallback(app.environ, app.kitty_ok, app.tui_settings.images),
+            .fallback = app.artworkFallback(),
         };
+    }
+
+    /// What Images shows instead of kitty images in this terminal, and why. Before the graphics
+    /// query's answer, only what doesn't wait for it (TERM=dumb, tmux): `finishProbe` brings the
+    /// rest.
+    fn artworkFallback(app: *const App) ?graphics.Fallback {
+        return graphics.fallback(app.environ, app.kitty_ok or !app.probe_done, app.tui_settings.images);
     }
 
     pub fn run(app: *App) !void {
@@ -557,7 +564,7 @@ pub const App = struct {
     fn finishProbe(app: *App) void {
         if (app.probe_done) return;
         app.probe_done = true;
-        app.ui.artwork.fallback = graphics.fallback(app.environ, app.kitty_ok, app.tui_settings.images);
+        app.ui.artwork.fallback = app.artworkFallback();
         app.setProtocol(app.artworkProtocol(app.ui.artwork.setting));
     }
 
@@ -2387,6 +2394,37 @@ test "the TUI logs to the file AM_TUI_LOG names" {
     app.log.print("ready, storefront {s}", .{"gb"});
     app.log.close();
     try testing.expectEqualStrings("ready, storefront gb\n", try tmp.dir.readFileAlloc(testing.io, "tui.log", a, .limited(4096)));
+}
+
+test "before the graphics query's answer, v's message names only what Images falls back to without it" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(testing.io, &buf)];
+    const settings: settings_mod.Settings = .{};
+
+    var ghostty: std.process.Environ.Map = .init(a);
+    try ghostty.put("TERM_PROGRAM", "ghostty");
+    const app = try App.create(.{ .io = testing.io, .gpa = testing.allocator, .environ = &ghostty, .config_dir = dir, .settings = &settings, .port = 1 });
+    defer app.destroy();
+    // No answer yet is not "no answer": nothing to name.
+    try testing.expectEqual(@as(?graphics.Fallback, null), app.ui.artwork.fallback);
+    // The query ran out with no yes.
+    app.probe_done = true;
+    try testing.expectEqualStrings("no answer to the graphics query", app.artworkFallback().?.why);
+    app.kitty_ok = true;
+    try testing.expectEqual(@as(?graphics.Fallback, null), app.artworkFallback());
+
+    // tmux doesn't wait for the answer.
+    var tmux: std.process.Environ.Map = .init(a);
+    try tmux.put("TERM_PROGRAM", "ghostty");
+    try tmux.put("TMUX", "/tmp/tmux-501/default,1,0");
+    const in_tmux = try App.create(.{ .io = testing.io, .gpa = testing.allocator, .environ = &tmux, .config_dir = dir, .settings = &settings, .port = 1 });
+    defer in_tmux.destroy();
+    try testing.expectEqualStrings("inside tmux", in_tmux.ui.artwork.fallback.?.why);
 }
 
 test "playing the remembered queue again copies it before freeing it" {

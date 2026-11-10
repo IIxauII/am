@@ -208,7 +208,9 @@ edit it by hand:
   reads the file again and changes only its own entry. An edit made while the TUI is open is
   kept, and so are entries am doesn't know, in their order. A change back to a default removes
   its entry. The file is replaced whole (a temporary file, then a rename). A `settings.json` that
-  is a link (dotfiles) stays one, and the file it points to is replaced.
+  is a link (dotfiles) stays one, and the file it points to is replaced. A link am can't follow
+  (a loop) stays as it is, and the save fails with a message; one whose file is gone is replaced
+  by am's own file.
 - A bad value (`"artwork": "kitty"`) falls back to its default, and the status line names the
   first problem when the TUI opens (`AM_TUI_LOG` gets all of them). A file that isn't valid JSON
   is never overwritten: am starts on the defaults, and `v` lasts only for the session, with a
