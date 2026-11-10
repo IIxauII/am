@@ -300,7 +300,7 @@ pub const App = struct {
     log: Log,
     /// settings.json's settings, with AM_IMAGES over its artwork: read once, at start
     /// (`loadSettings`), into `settings_arena`.
-    tui: settings_mod.Tui = .{},
+    tui_settings: settings_mod.Tui = .{},
     settings_arena: std.heap.ArenaAllocator,
     /// The first problem with settings.json went to the status line.
     settings_told: bool = false,
@@ -356,12 +356,12 @@ pub const App = struct {
     /// can't use leaves the defaults, and the first problem goes to the status line once signed
     /// in (`becomeReady`).
     fn loadSettings(app: *App, images: ?settings_mod.Images) void {
-        app.tui = settings_mod.loadTui(app.io, app.settings_arena.allocator(), app.config_dir, images) catch .{};
-        for (app.tui.problems) |p| app.log.print("{s}", .{p});
+        app.tui_settings = settings_mod.loadTui(app.io, app.settings_arena.allocator(), app.config_dir, images) catch .{};
+        for (app.tui_settings.problems) |p| app.log.print("{s}", .{p});
         app.ui.artwork = .{
-            .setting = app.tui.artwork,
-            .session_only = app.tui.artworkSessionOnly(),
-            .fallback = graphics.fallback(app.environ, app.kitty_ok, app.tui.images),
+            .setting = app.tui_settings.artwork,
+            .session_only = app.tui_settings.artworkSessionOnly(),
+            .fallback = graphics.fallback(app.environ, app.kitty_ok, app.tui_settings.images),
         };
     }
 
@@ -557,13 +557,13 @@ pub const App = struct {
     fn finishProbe(app: *App) void {
         if (app.probe_done) return;
         app.probe_done = true;
-        app.ui.artwork.fallback = graphics.fallback(app.environ, app.kitty_ok, app.tui.images);
+        app.ui.artwork.fallback = graphics.fallback(app.environ, app.kitty_ok, app.tui_settings.images);
         app.setProtocol(app.artworkProtocol(app.ui.artwork.setting));
     }
 
     /// What the artwork setting draws with in this terminal.
     fn artworkProtocol(app: *App, setting: graphics.Artwork) graphics.Protocol {
-        return graphics.protocolFor(app.environ, app.kitty_ok, setting, app.tui.images);
+        return graphics.protocolFor(app.environ, app.kitty_ok, setting, app.tui_settings.images);
     }
 
     fn setProtocol(app: *App, p: graphics.Protocol) void {
@@ -593,7 +593,7 @@ pub const App = struct {
         defer arena.deinit();
         const saved = settings_mod.saveChange(app.io, arena.allocator(), app.config_dir, change) catch |e| {
             app.log.print("can't save settings.json: {t}", .{e});
-            return app.toastFmt("Not saved: can't write settings.json ({t})", .{e}, .err);
+            return app.toastFmt("Not saved to settings.json ({t})", .{e}, .err);
         };
         switch (saved) {
             .saved, .unchanged => {},
@@ -730,13 +730,14 @@ pub const App = struct {
         s.user_token = a.dupe(u8, r.user_token) catch "";
         // The check's token is the newest; a renewal from before it is spent.
         app.replaced.clear(app.io, app.gpa);
-        if (r.expiring_soon) app.toast("The developer token expires within two weeks: run am token --key-stdin", .info);
-        if (r.own_problem) |why| app.toastFmt("Your own developer token isn't used ({s}); the shared one is", .{why}, .info);
-        // A bad settings.json never stops am: it says so once, at startup.
+        // A bad settings.json never stops am: it says so once, at startup. Before the token's
+        // messages, which need doing sooner and so take the status line when they come too.
         if (!app.settings_told) {
             app.settings_told = true;
-            if (app.tui.problems.len > 0) app.toast(app.tui.problems[0], .err);
+            if (app.tui_settings.problems.len > 0) app.toast(app.tui_settings.problems[0], .err);
         }
+        if (r.expiring_soon) app.toast("The developer token expires within two weeks: run am token --key-stdin", .info);
+        if (r.own_problem) |why| app.toastFmt("Your own developer token isn't used ({s}); the shared one is", .{why}, .info);
         app.log.print("ready, storefront {s}", .{r.storefront});
         if (!app.watching) {
             app.group.concurrent(app.io, watchTask, .{app}) catch {};

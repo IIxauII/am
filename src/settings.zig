@@ -149,8 +149,8 @@ pub const Artwork = @import("tui/graphics.zig").Artwork;
 pub const Tui = struct {
     /// How artwork is drawn at start: the file's `artwork`, or what `AM_IMAGES` picks.
     artwork: Artwork = .images,
-    /// What Images draws: `auto` (kitty images where the terminal can show them, else half
-    /// blocks), or the kitty protocol `AM_IMAGES` names.
+    /// What artwork `images` draws with: `auto` (kitty images where the terminal can show them,
+    /// else half blocks), or the kitty protocol `AM_IMAGES` names.
     images: Images = .auto,
     /// `AM_IMAGES` is set: it wins over the file's artwork for the run, so `v` changes only the
     /// session.
@@ -171,9 +171,13 @@ pub const Tui = struct {
 /// The TUI's settings from settings.json's text (null: there is none) and `AM_IMAGES` (null:
 /// unset). Allocates into `arena`.
 pub fn parseTui(arena: Allocator, images: ?Images, text: ?[]const u8) Allocator.Error!Tui {
+    return tuiFrom(arena, images, try parseObject(arena, text orelse ""));
+}
+
+fn tuiFrom(arena: Allocator, images: ?Images, file: Object) Allocator.Error!Tui {
     var t: Tui = .{};
     var problems: std.ArrayList([]const u8) = .empty;
-    const object: std.json.ObjectMap = switch (try parseObject(arena, text orelse "")) {
+    const object: std.json.ObjectMap = switch (file) {
         .object => |o| o,
         .bad => |bad| o: {
             t.unwritable = bad.why;
@@ -206,17 +210,12 @@ pub fn parseTui(arena: Allocator, images: ?Images, text: ?[]const u8) Allocator.
 pub fn loadTui(io: Io, arena: Allocator, config_dir: []const u8, images: ?Images) Allocator.Error!Tui {
     const text = config.readFile(io, arena, config_dir, config.file.settings) catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => {
-            const why = "can't read settings.json";
-            var t = try parseTui(arena, images, null);
-            t.unwritable = why;
-            t.problems = try arena.dupe([]const u8, &.{try arena.print(why ++ " ({t}): using the defaults and leaving the file alone", .{e})});
-            return t;
-        },
+        else => return tuiFrom(arena, images, .{ .bad = .{ .why = "can't read settings.json", .where = try arena.print(" ({t})", .{e}) } }),
     };
     return parseTui(arena, images, text);
 }
 
+/// What a save did.
 pub const Saved = union(enum) {
     saved,
     /// The file says so already.
@@ -234,7 +233,7 @@ pub fn saveChange(io: Io, arena: Allocator, config_dir: []const u8, change: Chan
         .unchanged => return .unchanged,
         .refused => |why| return .{ .refused = why },
         .text => |new| {
-            try writeTuiFile(io, arena, config_dir, new);
+            try writeSettingsFile(io, arena, config_dir, new);
             return .saved;
         },
     }
@@ -242,8 +241,8 @@ pub fn saveChange(io: Io, arena: Allocator, config_dir: []const u8, change: Chan
 
 /// Replaces settings.json, as the TUI's state file is replaced (`platform.writePrivateFile`). A
 /// settings.json that links elsewhere (dotfiles) stays a link: the file it points to is replaced
-/// instead, and its directory, which isn't am's, keeps its permissions.
-fn writeTuiFile(io: Io, arena: Allocator, config_dir: []const u8, text: []const u8) !void {
+/// instead, and it and its directory, which aren't am's, keep their permissions.
+fn writeSettingsFile(io: Io, arena: Allocator, config_dir: []const u8, text: []const u8) !void {
     const path = try Io.Dir.path.join(arena, &.{ config_dir, config.file.settings });
     const linked = if (Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = false })) |s| s.kind == .sym_link else |_| false;
     // A dangling link, or one that can't be followed, is replaced by am's own file.
@@ -252,9 +251,10 @@ fn writeTuiFile(io: Io, arena: Allocator, config_dir: []const u8, text: []const 
         else => null,
     } else null;
     const t = target orelse return platform.writePrivateFile(io, config_dir, config.file.settings, text);
+    const permissions = (try Io.Dir.cwd().statFile(io, t, .{})).permissions;
     var dir = try Io.Dir.cwd().openDir(io, Io.Dir.path.dirname(t) orelse return error.FileNotFound, .{});
     defer dir.close(io);
-    var file = try dir.createFileAtomic(io, Io.Dir.path.basename(t), .{ .replace = true });
+    var file = try dir.createFileAtomic(io, Io.Dir.path.basename(t), .{ .permissions = permissions, .replace = true });
     defer file.deinit(io);
     try file.file.writeStreamingAll(io, text);
     try file.replace(io);
@@ -307,7 +307,7 @@ fn setEntry(arena: Allocator, object: *std.json.ObjectMap, name: []const u8, val
     return true;
 }
 
-/// settings.json's text as a JSON object, or why am can't use it.
+/// settings.json's text as a JSON object, or why am can't use it (`Tui.unwritable`).
 const Object = union(enum) {
     object: std.json.ObjectMap,
     bad: struct {
@@ -881,6 +881,24 @@ test "saveChange reads settings.json again and writes it whole: a hand edit sinc
     try testing.expectEqualStrings("{\"artwork\": \"off\",", try tmp.dir.readFileAlloc(io, "settings.json", a, .limited(4096)));
 }
 
+test "a settings.json that can't be read is never written either: the defaults, and a problem naming why" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(io, &buf)];
+    try tmp.dir.createDirPath(io, "settings.json");
+
+    const tui = try loadTui(io, a, dir, .blocks);
+    try testing.expectEqual(Artwork.blocks, tui.artwork);
+    try testing.expectEqualStrings("can't read settings.json", tui.unwritable.?);
+    try testing.expectEqualStrings("can't read settings.json (IsDir): using the defaults and leaving the file alone", tui.problems[0]);
+    try testing.expectError(error.IsDir, saveChange(io, a, dir, .{ .artwork = .off }));
+}
+
 test "saveChange on a settings.json that links elsewhere (dotfiles) writes the file it points to, and the link stays" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
@@ -894,6 +912,7 @@ test "saveChange on a settings.json that links elsewhere (dotfiles) writes the f
     try tmp.dir.createDirPath(io, "dotfiles");
     try tmp.dir.createDirPath(io, "am");
     try tmp.dir.writeFile(io, .{ .sub_path = "dotfiles/am.json", .data = "{\"artwork\": \"off\"}\n" });
+    try tmp.dir.setFilePermissions(io, "dotfiles/am.json", .fromMode(0o600), .{});
     try tmp.dir.symLink(io, "../dotfiles/am.json", "am/settings.json", .{});
 
     const dir = try Io.Dir.path.join(a, &.{ root, "am" });
@@ -901,6 +920,8 @@ test "saveChange on a settings.json that links elsewhere (dotfiles) writes the f
     try testing.expectEqual(Saved.saved, try saveChange(io, a, dir, .{ .artwork = .blocks }));
     try testing.expectEqual(Io.File.Kind.sym_link, (try tmp.dir.statFile(io, "am/settings.json", .{ .follow_symlinks = false })).kind);
     try testing.expectEqualStrings("{\n  \"artwork\": \"blocks\"\n}\n", try tmp.dir.readFileAlloc(io, "dotfiles/am.json", a, .limited(4096)));
+    // The file it points to keeps its own permissions.
+    try testing.expectEqual(@as(u32, 0o600), (try tmp.dir.statFile(io, "dotfiles/am.json", .{})).permissions.toMode() & 0o777);
 }
 
 test "the daemon starts with AM_PORT, ENGINE and ENGINE_IDLE_MINUTES, or refuses over the first bad one" {
