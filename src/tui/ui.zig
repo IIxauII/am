@@ -1435,6 +1435,46 @@ test "a key matches whole: Alt+j and Shift+↓ do nothing while j moves; Shift+E
     try testing.expectEqualStrings("2", takeEffects(&u)[0].play.startId.?);
 }
 
+test "keys only some terminals tell apart work as the shared key, in a list and in a text field" {
+    var u: Ui = .init(testing.allocator);
+    defer u.deinit();
+    u.key(.char('3'), 0);
+    const v = u.current().?;
+    _ = takeEffects(&u);
+    try v.list.appendPage(&.{ song("1", "a"), song("2", "b"), song("3", "c") }, null, 3);
+
+    // Shift+g is G (bottom); Ctrl+j is Enter.
+    u.key(.{ .code = .{ .char = 'g' }, .shift = true }, 0);
+    u.key(.ctrlChar('j'), 0);
+    try testing.expectEqualStrings("3", takeEffects(&u)[0].play.startId.?);
+    // Ctrl+Shift+u is ^u (half page up); Ctrl+Enter is Enter.
+    u.key(.{ .code = .{ .char = 'u' }, .ctrl = true, .shift = true }, 0);
+    u.key(.{ .code = .enter, .ctrl = true }, 0);
+    try testing.expectEqualStrings("1", takeEffects(&u)[0].play.startId.?);
+    // Ctrl+i is Tab; Ctrl+Alt+i is Alt+Tab, a key of its own that does nothing.
+    u.key(.{ .code = .{ .char = 'i' }, .ctrl = true, .alt = true }, 0);
+    try testing.expectEqual(Focus.main, u.focus);
+    u.key(.ctrlChar('i'), 0);
+    try testing.expectEqual(Focus.sidebar, u.focus);
+    u.key(.ctrlChar('i'), 0);
+    try testing.expectEqual(Focus.main, u.focus);
+    // Ctrl+[ is Esc: at a section's root it moves the focus to the sidebar.
+    u.key(.ctrlChar('['), 0);
+    try testing.expectEqual(Focus.sidebar, u.focus);
+
+    // In a text field: Ctrl+i switches catalog / library, Ctrl+j searches, Ctrl+[ leaves.
+    u.key(.char('/'), 0);
+    _ = takeEffects(&u);
+    const s = u.current().?.search.?;
+    for ("queen") |c| u.key(.char(c), 0);
+    u.key(.ctrlChar('i'), 0);
+    try testing.expect(s.library);
+    u.key(.ctrlChar('j'), 0);
+    try testing.expectEqualStrings("queen", s.submitted.items);
+    u.key(.ctrlChar('['), 0);
+    try testing.expect(!u.textMode());
+}
+
 test "^c quits from a list, a text field and the help; q types in a field" {
     var u: Ui = .init(testing.allocator);
     defer u.deinit();

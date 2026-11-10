@@ -314,8 +314,7 @@ fn drawSidebar(s: *Screen, f: *Frame, t: Theme, r: Rect) void {
         if (picked) s.fill(r.x, y, r.w, 1, style);
         const indent: u16 = if (sec.inLibrary()) 3 else 1;
         var label_buf: [48]u8 = undefined;
-        const hot = sec.defaultKey();
-        const label = if (hot) |k|
+        const label = if (sec.defaultKey()) |k|
             std.fmt.bufPrint(&label_buf, "{c} {s}", .{ k, sec.title() }) catch sec.title()
         else
             std.fmt.bufPrint(&label_buf, "  {s}", .{sec.title()}) catch sec.title();
@@ -334,7 +333,7 @@ fn drawTabs(s: *Screen, f: *Frame, t: Theme, r: Rect) void {
         full[i] = tabLabel(&bufs[i], sec, false);
         total += width.textWidth(full[i]) + 2;
     }
-    // Every tab spelled out when they fit; else hotkeys only, the current one spelled out.
+    // Every tab spelled out when they fit; else just their keys, the current one spelled out.
     const compact = total > r.w;
     var x = r.x;
     for (keys.sidebar, 0..) |sec, i| {
