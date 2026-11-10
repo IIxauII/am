@@ -1070,8 +1070,8 @@ pub const Daemon = struct {
         defer d.engine_mutex.unlock(d.io);
         var view = try d.engineViewLocked(arena);
         view.own_play_stopped = own_play_stopped;
-        // Nothing else uses the daemon and no play is on its way: a page still loading is the
-        // launch of the quitting TUI's own keep-alive.
+        // Nothing else uses the daemon and no play is on its way: a page still loading waits for
+        // nobody but the quitting TUI's own keep-alive.
         view.own_keep_alive = d.requests.askerHoldsKeepAlive(d.io, asker);
         if (view.running and view.ready) if (fresh) |report| {
             view.report = report;

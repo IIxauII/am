@@ -5,9 +5,9 @@
 //!
 //! On open it launches the engine and waits for its page, as `am doctor` does, but prints
 //! nothing and repairs nothing. An engine already running is held as it is, even one whose page
-//! has no stream, which `start` would relaunch. It never launches again: an engine that fails to
-//! start, exits on its own or is closed by `am signin --engine` stays down until the next play
-//! launches it.
+//! has no stream, which `start` relaunches once its launch is older than the launch wait. It
+//! never launches again: an engine that fails to start, exits on its own or is closed by `am
+//! signin --engine` stays down until the next play launches it.
 const std = @import("std");
 const host_mod = @import("host.zig");
 const protocol = @import("protocol.zig");
@@ -213,6 +213,23 @@ test "keep-engine holds an engine already running whose page has no stream as it
     try testing.expectEqual(@as(u32, 1), rig.launcher.launchCount());
     rig.fp.release(.open, .answer);
     const printed = try held.close();
+    // Not even asked to relaunch it.
+    try testing.expectEqual(@as(u32, 0), rig.launcher.relaunch_asks);
+    try testing.expectEqual(@as(u8, 0), printed.code);
+    try testing.expectEqualStrings("", printed.out);
+}
+
+test "a sign-in window isn't the engine: keep-engine still starts one" {
+    var rig: Rig = undefined;
+    rig.init(Rig.timing);
+    defer rig.deinit();
+    var ph: PageHost = .{ .rig = &rig, .signin_window = true };
+    var held: Held = undefined;
+    try held.open(&ph);
+    try pageReady(&rig);
+    try testing.expectEqual(@as(u32, 1), rig.launcher.launchCount());
+    const printed = try held.close();
+    try testing.expectEqual(@as(u8, 0), printed.code);
     try testing.expectEqualStrings("", printed.out);
 }
 
