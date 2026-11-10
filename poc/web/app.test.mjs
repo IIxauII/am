@@ -1070,15 +1070,17 @@ test('the snapshot names stopped live radio until a play, a queue load or a rest
 const stateName = (state) => Object.keys(S).find((k) => S[k] === state)
 
 // A fake with Little Wing loaded at 0:12, `state` (playing or paused). Its pause and seek land
-// after a moment; the station queues note what they replace: its state and time.
-function songMusic(state) {
+// after a moment, and a station queue replaces the song; `pause`, `seek` and `queue` do those
+// steps instead. The station queues note what they replace: its state and time.
+function songMusic(state, { pause, seek, queue } = {}) {
   const m = fakeMusic({
     state,
-    pause: () => sleep(100).then(() => (m.playbackState = S.paused)),
-    seek: (t) => sleep(100).then(() => (m.currentPlaybackTime = t)),
+    pause: pause ?? (() => sleep(100).then(() => (m.playbackState = S.paused))),
+    seek: seek ?? ((t) => sleep(100).then(() => (m.currentPlaybackTime = t))),
   })
   const replace = (what) => {
     m.call(`${what} over ${stateName(m.playbackState)} at ${m.currentPlaybackTime}`)
+    if (queue) return queue()
     m.nowPlayingItem = { ...radio, id: 'ra.2' }
     m.playbackState = S.loading
     return Promise.resolve()
@@ -1092,6 +1094,7 @@ function songMusic(state) {
 for (const [what, req, queued] of [
   ['station', { station: 'ra.2' }, 'setQueue ra.2'],
   ['station for a song', { stationFor: { song: '7' } }, 'setStationQueue 7'],
+  ['station for an artist', { stationFor: { artist: '9' } }, 'setStationQueue 9'],
 ]) {
   // Paused already, it needs no pause, as `am stop` needs none.
   for (const [how, state, pause] of [
@@ -1117,8 +1120,7 @@ test('a station queued over a song paused at 0:00 replaces it at once: there is 
 })
 
 test('a station whose rewind of the song never settles still plays, about 2 s later, with the give-up', async () => {
-  const m = songMusic(S.paused)
-  m.seekToTime = (t) => (m.call(`seek ${t}`), stuckSeek(t, m))
+  const m = songMusic(S.paused, { seek: stuckSeek })
   const { value, ms } = await timed(() => page(m).playQueue({ station: 'ra.2' }, 0))
   assert.equal(ms, SETTLE_MS)
   assert.deepEqual(m.calls, ['seek 0', 'setQueue ra.2 over seeking at 12', 'play'])
@@ -1126,19 +1128,17 @@ test('a station whose rewind of the song never settles still plays, about 2 s la
   assert.equal(value.playbackState, 'playing')
 })
 
-test('a station queued over live radio replaces it at once: live radio has no pause, and plays in its own player', async () => {
-  const m = songMusic(S.playing)
-  m.nowPlayingItem = radio
+test('a station queued over live radio replaces it at once: live radio has no pause, and plays in a MusicKit player of its own', async () => {
   // MusicKit's pause() does nothing on live radio.
-  m.pause = () => (m.call('pause'), Promise.resolve())
+  const m = songMusic(S.playing, { pause: async () => {} })
+  m.nowPlayingItem = radio
   const { ms } = await timed(() => page(m).playQueue({ station: 'ra.2' }, 0))
   assert.equal(ms, 0)
   assert.deepEqual(m.calls, ['setQueue ra.2 over playing at 12', 'play'])
 })
 
 test('a station whose pause of the song never settles still plays, a few seconds later, with the give-up', async () => {
-  const m = songMusic(S.playing)
-  m.pause = () => (m.call('pause'), never())
+  const m = songMusic(S.playing, { pause: never })
   const { value, ms } = await timed(() => page(m).playQueue({ station: 'ra.2' }, 0))
   // The pause's bound, then the wait for the music to go quiet. Still playing, it isn't sought.
   assert.equal(ms, SETTLE_MS + UNTIL_MS)
@@ -1157,6 +1157,17 @@ test('a stop while a station pauses the song cancels the station before its queu
   await assert.rejects(queued, { message: 'stopped before it started' })
   await idle()
   assert.ok(!m.calls.some((c) => c.startsWith('setQueue') || c === 'play'), m.calls.join(', '))
+  assert.equal(am.snapshot().nowPlaying.id, '1')
+  assert.equal(am.snapshot().playbackState, 'paused')
+  assert.equal(m.currentPlaybackTime, 0)
+})
+
+// The rewind comes before the queue, so a queue that fails leaves the song as `am stop` would.
+test('a station whose queue fails after the rewind fails, and leaves the song paused at 0:00', async () => {
+  const m = songMusic(S.playing, { queue: () => Promise.reject(new Error('no such station')) })
+  const am = page(m)
+  await assert.rejects(am.playQueue({ station: 'ra.9' }, 0), { message: 'no such station' })
+  assert.deepEqual(m.calls, ['pause', 'seek 0', 'setQueue ra.9 over paused at 0'])
   assert.equal(am.snapshot().nowPlaying.id, '1')
   assert.equal(am.snapshot().playbackState, 'paused')
   assert.equal(m.currentPlaybackTime, 0)

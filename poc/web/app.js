@@ -842,8 +842,11 @@ const am = {
     return load(gen, async (ctx) => {
       const { check, playing, takeMusic } = ctx
       if (req.station || req.stationFor) {
-        // Before the rewind: a request that can't play leaves the song alone.
-        if (!req.station && !req.stationFor.song && !req.stationFor.artist) throw new Error('stationFor needs a song or an artist')
+        // A station for a song, or else for an artist. Worked out before the rewind: a request that
+        // can't play leaves the song alone.
+        const { song, artist } = req.stationFor ?? {}
+        const seed = song ? { song } : artist ? { artist } : null
+        if (!req.station && !seed) throw new Error('stationFor needs a song or an artist')
         await takeMusic()
         const late = []
         await rewindSong(late)
@@ -854,9 +857,8 @@ const am = {
           context = { type: 'stations', id: req.station, name: null }
           await music.setQueue({ station: req.station })
         } else {
-          const [kind, id] = req.stationFor.song ? ['song', req.stationFor.song] : ['artist', req.stationFor.artist]
           context = null
-          await music.setStationQueue({ [kind]: id })
+          await music.setStationQueue(seed)
         }
         await check()
         keepVolume()
