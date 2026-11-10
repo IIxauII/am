@@ -272,6 +272,43 @@ pub fn failPageCall(r: *Reply, e: Host.CallError, method: []const u8, timeout: I
     };
 }
 
+/// A control play (Space, `am resume`, play-next, play-later) on its way to its page call. Its
+/// caller waits out what is in flight (`Page.waitOutInFlight`) first. When a launch since that
+/// wait (a relaunch) leaves the play's look or page call no page, `again` tells the caller to
+/// wait for that launch's page and try once more. It never repairs.
+pub const ControlPlay = struct {
+    play: *Play,
+    /// The engine the play waits out what is in flight on; null: none ran.
+    waited_on: ?platform.ProcessId,
+    retried: bool = false,
+
+    /// Reads the engine's state first, as `Page.waitOutInFlight` asks: that waits out a launch
+    /// call that hasn't set its nonce yet, and names the engine the play waits on.
+    pub fn begin(host: Host, arena: Allocator, play: *Play) Allocator.Error!ControlPlay {
+        const s = try host.state(arena);
+        return .{ .play = play, .waited_on = if (s.engine) |e| e.pid else null };
+    }
+
+    /// After the play's look or page call found no page (`failed`: the call's error, null for a
+    /// look): true, once, when another engine runs now than the one it waited on. A launch came
+    /// since its wait then, a relaunch or a launch call that held the engine just then, and the
+    /// play waits for that launch's page and tries once more. Reads the state, which waits out
+    /// a launch call that still holds the engine. A call that never went out, or went to a
+    /// browser that is gone, counts as unsent again (`Play.unsend`), so a stop during the next
+    /// wait cancels it.
+    pub fn again(c: *ControlPlay, host: Host, arena: Allocator, failed: ?Host.CallError) Allocator.Error!bool {
+        if (c.retried) return false;
+        if (failed) |e| if (e == error.NoEnginePage) c.play.unsend();
+        const s = try host.state(arena);
+        const engine = s.engine orelse return false;
+        if (engine.signin_window) return false;
+        if (c.waited_on) |pid| if (pid == engine.pid) return false;
+        c.play.unsend();
+        c.retried = true;
+        return true;
+    }
+};
+
 /// What a watch compares each look at the engine against.
 pub const Watching = struct {
     started_at: Io.Clock.Timestamp,
