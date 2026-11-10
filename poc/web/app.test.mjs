@@ -1278,7 +1278,8 @@ const nonceIn = (url) => new URL(url, 'http://localhost').searchParams.get('engi
 // sessionStorage, localStorage and window.name, so a page load id kept in any of them fails the
 // reload test. A load's `claims` holds each claim as its method and nonce, `streams` each event
 // stream's nonce, `sockets` each WebSocket it opened, `reports` each report's body as sent over
-// one, and `sentAt` when (virtual ms); `tick` runs its once-a-second report, and `ctx` is its window.
+// one, and `sentAt` when (virtual ms); `intervals` holds each timer's period, `tick` runs them
+// (the once-a-second report), and `ctx` is its window.
 //
 // Its WebSocket is a browser's as far as the page can tell: it opens on the next turn of the
 // clock, its `send` throws while it is still opening and drops what it is given once closed, and
@@ -1344,10 +1345,10 @@ function engineLaunch(search) {
           }
         },
         WebSocket,
-        setInterval: (fn) => ticks.push(fn),
+        setInterval: (fn, ms) => ticks.push({ fn, ms }),
       }).ctx
       for (const fn of domLoaded) await fn()
-      return { ...sent, ctx: lastWindow, tick: () => ticks.forEach((fn) => fn()) }
+      return { ...sent, ctx: lastWindow, intervals: ticks.map((t) => t.ms), tick: () => ticks.forEach((t) => t.fn()) }
     },
   }
 }
@@ -1387,6 +1388,7 @@ const gaps = (times) => times.slice(1).map((t, i) => t - times[i])
 // events bring, at most about four a second, with the last of a burst sent at the burst's end.
 test('reports go over one socket per page load, once a second and at most about four a second in a burst', async () => {
   const load = await engineLaunch('?engine=l4unch').load()
+  assert.deepEqual(load.intervals, [1000], 'the page\'s timers, ms')
   for (let i = 0; i < 5; i++) {
     load.tick()
     await sleep(1000)

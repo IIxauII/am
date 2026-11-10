@@ -27,7 +27,8 @@ const app_js = @embedFile("web/app.js");
 /// engine page shows up as a failed write (std.http.Server has no timeouts of its own).
 pub const ping_interval: Io.Duration = .fromSeconds(15);
 
-/// Request bodies (results and tokens) and the report socket's messages: a few KiB.
+/// Request bodies (results and tokens) and the report socket's messages. A report is a few KiB,
+/// and more with long queue items or events: past the connection's 16 KiB buffer at times.
 const max_body = 1 << 20;
 
 pub const Response = struct {
@@ -338,76 +339,87 @@ pub const Server = struct {
         while (try readMessage(&socket, s.gpa, &message)) |report| switch (try s.channel.postReport(report)) {
             .accepted, .invalid => {},
             // The page's next report asks for a new socket, which a page of an old launch doesn't get.
-            .stale => return closeSocket(&socket, policy_violation),
+            .stale => return closeStale(&socket),
         };
     }
 };
 
-/// The WebSocket status code that closes a report socket whose launch is over.
-const policy_violation = 1008;
+const WebSocket = std.http.Server.WebSocket;
 
 /// Reads the next text or binary message into `message`, answering pings on the way, and returns
 /// it; null once the page has closed the socket (answered with a close of our own). Unlike
 /// `WebSocket.readSmallMessage`, it takes a message larger than the connection's buffer (up to
 /// `max_body`, as a POST body), and one in fragments.
-fn readMessage(socket: *std.http.Server.WebSocket, gpa: Allocator, message: *std.ArrayList(u8)) !?[]const u8 {
-    const WebSocket = std.http.Server.WebSocket;
+fn readMessage(socket: *WebSocket, gpa: Allocator, message: *std.ArrayList(u8)) !?[]const u8 {
     const in = socket.input;
     message.clearRetainingCapacity();
     var fragmented = false;
+    var control: [125]u8 = undefined;
     while (true) {
-        const header = (try in.takeArray(2)).*;
-        const h0: WebSocket.Header0 = @bitCast(header[0]);
-        const h1: WebSocket.Header1 = @bitCast(header[1]);
-        // A browser masks every frame it sends.
-        if (!h1.mask) return error.MissingMaskBit;
-        const len: u64 = switch (h1.payload_len) {
-            .len16 => try in.takeInt(u16, .big),
-            .len64 => try in.takeInt(u64, .big),
-            else => @backingInt(h1.payload_len),
-        };
-        const mask = (try in.takeArray(4)).*;
-        switch (h0.opcode) {
+        const frame = try readFrameHead(in);
+        switch (frame.opcode) {
             .text, .binary, .continuation => {
                 // A continuation only within a message, and a new message only between them.
-                if ((h0.opcode == .continuation) != fragmented) return error.UnexpectedOpCode;
-                if (len > max_body - message.items.len) return error.MessageOversize;
-                const payload = try message.addManyAsSlice(gpa, @intCast(len));
+                if ((frame.opcode == .continuation) != fragmented) return error.UnexpectedOpCode;
+                if (frame.len > max_body - message.items.len) return error.MessageOversize;
+                const payload = try message.addManyAsSlice(gpa, @intCast(frame.len));
                 try in.readSliceAll(payload);
-                unmask(payload, mask);
-                if (h0.fin) return message.items;
+                unmask(payload, frame.mask);
+                if (frame.fin) return message.items;
                 fragmented = true;
             },
-            .ping, .pong, .connection_close => {
-                // Control frames come whole, with at most 125 bytes.
-                if (!h0.fin or len > 125) return error.UnexpectedOpCode;
-                var buffer: [125]u8 = undefined;
-                const payload = buffer[0..@intCast(len)];
-                try in.readSliceAll(payload);
-                unmask(payload, mask);
-                switch (h0.opcode) {
-                    .ping => try socket.writeMessage(payload, .pong),
-                    .connection_close => {
-                        // With the page's status code back, as RFC 6455 asks.
-                        try socket.writeMessage(payload[0..@min(payload.len, 2)], .connection_close);
-                        return null;
-                    },
-                    else => {},
-                }
+            .ping => try socket.writeMessage(try readControl(in, frame, &control), .pong),
+            .pong => _ = try readControl(in, frame, &control),
+            .connection_close => {
+                const payload = try readControl(in, frame, &control);
+                // With the page's status code back, as RFC 6455 asks.
+                try socket.writeMessage(payload[0..@min(payload.len, 2)], .connection_close);
+                return null;
             },
             _ => return error.UnexpectedOpCode,
         }
     }
 }
 
+/// A frame up to its payload.
+const FrameHead = struct {
+    fin: bool,
+    opcode: WebSocket.Opcode,
+    len: u64,
+    mask: [4]u8,
+};
+
+fn readFrameHead(in: *Io.Reader) !FrameHead {
+    const header = (try in.takeArray(2)).*;
+    const h0: WebSocket.Header0 = @bitCast(header[0]);
+    const h1: WebSocket.Header1 = @bitCast(header[1]);
+    // A browser masks every frame it sends.
+    if (!h1.mask) return error.MissingMaskBit;
+    const len: u64 = switch (h1.payload_len) {
+        .len16 => try in.takeInt(u16, .big),
+        .len64 => try in.takeInt(u64, .big),
+        else => @backingInt(h1.payload_len),
+    };
+    return .{ .fin = h0.fin, .opcode = h0.opcode, .len = len, .mask = (try in.takeArray(4)).* };
+}
+
+/// A control frame's payload, read into `buffer`. Control frames come whole, with at most 125 bytes.
+fn readControl(in: *Io.Reader, frame: FrameHead, buffer: *[125]u8) ![]u8 {
+    if (!frame.fin or frame.len > buffer.len) return error.UnexpectedOpCode;
+    const payload = buffer[0..@intCast(frame.len)];
+    try in.readSliceAll(payload);
+    unmask(payload, frame.mask);
+    return payload;
+}
+
 fn unmask(payload: []u8, mask: [4]u8) void {
     for (payload, 0..) |*b, i| b.* ^= mask[i % 4];
 }
 
-/// Closes the socket from our end, with this status code.
-fn closeSocket(socket: *std.http.Server.WebSocket, code: u16) !void {
+/// Closes a report socket whose launch is over, with 1008 (policy violation).
+fn closeStale(socket: *WebSocket) !void {
     var payload: [2]u8 = undefined;
-    std.mem.writeInt(u16, &payload, code, .big);
+    std.mem.writeInt(u16, &payload, 1008, .big);
     try socket.writeMessage(&payload, .connection_close);
 }
 
@@ -540,16 +552,26 @@ const TestServer = struct {
         t.channel.deinit();
     }
 
+    /// `request` with `PORT` in it replaced by the server's port. Allocated with the testing
+    /// allocator.
+    fn withPort(t: *TestServer, request: []const u8) ![]u8 {
+        var port_text: [5]u8 = undefined;
+        const port = try std.mem.print(&port_text, "{d}", .{t.server.port});
+        return std.mem.replaceOwned(u8, testing.allocator, request, "PORT", port);
+    }
+
+    fn connect(t: *TestServer) !net.Stream {
+        const address: net.IpAddress = .{ .ip4 = .loopback(t.server.port) };
+        return address.connect(testing.io, .{ .mode = .stream });
+    }
+
     /// Sends one request (`PORT` in it becomes the server's port) and returns the whole
     /// response. Allocated with the testing allocator.
     fn send(t: *TestServer, request: []const u8) ![]u8 {
         const io = testing.io;
-        var port_text: [5]u8 = undefined;
-        const port = try std.mem.print(&port_text, "{d}", .{t.server.port});
-        const bytes = try std.mem.replaceOwned(u8, testing.allocator, request, "PORT", port);
+        const bytes = try t.withPort(request);
         defer testing.allocator.free(bytes);
-        const address: net.IpAddress = .{ .ip4 = .loopback(t.server.port) };
-        const stream = try address.connect(io, .{ .mode = .stream });
+        const stream = try t.connect();
         defer stream.close(io);
         var write_buffer: [1024]u8 = undefined;
         var w = stream.writer(io, &write_buffer);
@@ -689,8 +711,7 @@ test "claim, events and the report socket answer 409 to a stale nonce" {
 
 fn readEvents(t: *TestServer, out: *[2048]u8) !usize {
     const io = testing.io;
-    const address: net.IpAddress = .{ .ip4 = .loopback(t.server.port) };
-    const stream = try address.connect(io, .{ .mode = .stream });
+    const stream = try t.connect();
     defer stream.close(io);
     var write_buffer: [512]u8 = undefined;
     var w = stream.writer(io, &write_buffer);
@@ -748,20 +769,17 @@ const TestSocket = struct {
     /// The response head, once `open` has read it.
     head: []const u8,
 
-    const Opcode = std.http.Server.WebSocket.Opcode;
+    const Opcode = WebSocket.Opcode;
 
     /// Asks for the report socket with this nonce and Origin (`PORT` in it becomes the server's
     /// port) and returns the response's status. On 101 the socket is open.
     fn open(ws: *TestSocket, t: *TestServer, comptime nonce: []const u8, comptime origin: []const u8) !u16 {
         const io = testing.io;
-        const address: net.IpAddress = .{ .ip4 = .loopback(t.server.port) };
-        ws.stream = try address.connect(io, .{ .mode = .stream });
+        ws.stream = try t.connect();
         errdefer ws.stream.close(io);
         ws.reader = ws.stream.reader(io, &ws.read_buffer);
         ws.writer = ws.stream.writer(io, &ws.write_buffer);
-        var port_text: [5]u8 = undefined;
-        const port = try std.mem.print(&port_text, "{d}", .{t.server.port});
-        const request = try std.mem.replaceOwned(u8, testing.allocator, upgradeRequest("/reports?engine=" ++ nonce, "Connection: Upgrade\r\nOrigin: " ++ origin ++ "\r\n"), "PORT", port);
+        const request = try t.withPort(upgradeRequest("/reports?engine=" ++ nonce, "Connection: Upgrade\r\nOrigin: " ++ origin ++ "\r\n"));
         defer testing.allocator.free(request);
         try ws.writer.interface.writeAll(request);
         try ws.writer.interface.flush();
@@ -847,9 +865,6 @@ test "each message on the report socket reaches the channel as a report, however
     defer t.stop();
     const nonce = "abababababababababababababababab";
     t.channel.setNonce(nonce.*);
-    // A plain request gets no socket.
-    try testing.expectEqual(@as(u16, 426), try t.status("GET /reports?engine=" ++ nonce ++ " HTTP/1.1\r\nHost: localhost:PORT\r\nConnection: close\r\n\r\n"));
-
     var socket: TestSocket = undefined;
     try testing.expectEqual(@as(u16, 101), try socket.open(&t, nonce, "http://localhost:PORT"));
     defer socket.close();
@@ -891,6 +906,14 @@ test "each message on the report socket reaches the channel as a report, however
     try testing.expectEqual(TestSocket.Opcode.connection_close, close.opcode);
     try testing.expectEqualSlices(u8, &.{ 0x03, 0xe8 }, close.payload);
     try testing.expect(socket.ended());
+}
+
+test "the report socket is a WebSocket only: a plain request for it gets 426" {
+    var t: TestServer = undefined;
+    try t.start();
+    defer t.stop();
+    t.channel.setNonce("abababababababababababababababab".*);
+    try testing.expectEqual(@as(u16, 426), try t.status("GET /reports?engine=abababababababababababababababab HTTP/1.1\r\nHost: localhost:PORT\r\nConnection: close\r\n\r\n"));
 }
 
 test "a report for a launch that is over closes the report socket" {

@@ -200,7 +200,6 @@ pub const Channel = struct {
     pub const ReportVerdict = enum { accepted, stale, invalid };
 
     /// A message on the report socket (`/reports`): kept only if it carries the current nonce.
-    /// A stale one closes the socket.
     pub fn postReport(c: *Channel, body: []const u8) Allocator.Error!ReportVerdict {
         var arena: std.heap.ArenaAllocator = .init(c.gpa);
         defer arena.deinit();

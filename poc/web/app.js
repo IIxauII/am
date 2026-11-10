@@ -1091,7 +1091,7 @@ function connect() {
     }
     fetch('/result', { method: 'POST', body: JSON.stringify(reply) })
   }
-  const send = reportSocket(`ws://${location.host}/reports?engine=${ENGINE}`)
+  const sendReport = reportSocket(`ws://${location.host}/reports?engine=${ENGINE}`)
   let last = 0
   let trailing = null
   report = () => {
@@ -1106,7 +1106,7 @@ function connect() {
       return
     }
     last = Date.now()
-    send(JSON.stringify(snapshot()))
+    sendReport(JSON.stringify(snapshot()))
   }
   setInterval(report, 1000)
 }

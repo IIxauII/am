@@ -50,7 +50,8 @@ export async function startServer() {
   }
 
   // The page's report socket (`/reports?engine=<nonce>`): each message is a report. A minimal
-  // WebSocket: masked frames from the page, fragments and pings answered, nothing sent otherwise.
+  // WebSocket: it reads the page's masked frames and joins fragments, and sends only a pong for
+  // a ping and a close for a close or another launch's report.
   function upgrade(req, socket) {
     const url = new URL(req.url, 'http://x')
     const key = req.headers['sec-websocket-key']
