@@ -570,8 +570,8 @@ pub const SigninWait = struct {
 };
 
 /// Test double: canned answers, scripted where a command reads the same thing repeatedly, and a
-/// canned engine page (`start`, `probe`, `repair`, `joinInFlight`). Tests of the endpoints that
-/// drive the engine page itself run on `fake_page.PageHost` instead.
+/// canned engine page (`start`, `probe`, `repair`, `waitOutInFlight`). Tests of the endpoints
+/// that drive the engine page itself run on `fake_page.PageHost` instead.
 pub const Fake = struct {
     /// `state` answers these in turn; the last repeats.
     states: []const State = &.{.{ .engine = null, .report = null }},
@@ -594,7 +594,7 @@ pub const Fake = struct {
     says: []const u8 = "",
     /// What `reloadInFlight` answers.
     page_reloading: bool = false,
-    /// `joinInFlight` prints this first, as the module prints its line for waiting on a reload.
+    /// `waitOutInFlight` prints this first, as the module prints its line for waiting on a reload.
     join_says: []const u8 = "",
     /// A stop elsewhere succeeds while a control play joins a reload.
     stop_while_joining: bool = false,
@@ -629,7 +629,7 @@ pub const Fake = struct {
     stop_at_state: ?usize = null,
     /// How often the page was asked to repair.
     repairs: usize = 0,
-    /// How often a control play joined a reload (`joinInFlight`).
+    /// How often a control play waited out a launch or a reload in flight (`waitOutInFlight`).
     joins: usize = 0,
     /// The `user_token_ok` the last repair if idle was asked with.
     idle_user_token_ok: ?bool = null,
@@ -666,7 +666,7 @@ pub const Fake = struct {
                 .probe = fakeProbe,
                 .repair = fakeRepair,
                 .reloadInFlight = fakeReloadInFlight,
-                .joinInFlight = fakeJoinInFlight,
+                .waitOutInFlight = fakeWaitOutInFlight,
             } },
         };
     }
@@ -777,7 +777,7 @@ pub const Fake = struct {
     fn fakeReloadInFlight(ptr: *anyopaque, _: Allocator) Allocator.Error!bool {
         return of(ptr).page_reloading;
     }
-    fn fakeJoinInFlight(ptr: *anyopaque, r: *protocol.Reply, _: ?*const Plays.Play) protocol.Reply.Error!void {
+    fn fakeWaitOutInFlight(ptr: *anyopaque, r: *protocol.Reply, _: ?*const Plays.Play) protocol.Reply.Error!void {
         const f = of(ptr);
         f.joins += 1;
         if (f.join_says.len > 0) try r.print("{s}", .{f.join_says});

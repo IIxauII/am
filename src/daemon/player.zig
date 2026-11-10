@@ -333,10 +333,14 @@ pub fn control(host: Host, r: *Reply, req: ControlRequest) Reply.Error!void {
         .play_next, .play_later => .fromSeconds(120),
         else => .fromSeconds(10),
     };
-    // A play makes its page call on the new page load, not in a reload's gap, where it would
-    // fail as not running and play-next or play-later would drop their songs. It never repairs.
+    // A play makes its page call once a launch's page is ready, and on a reload's new page
+    // load, not in its gap, where it would fail as not running and play-next or play-later
+    // would drop their songs. It never repairs. The state is read first, as for `am resume`,
+    // only to wait out a launch call that hasn't set the launch's nonce yet: then the wait
+    // sees the launch.
     if (p) |*x| {
-        try host.page.joinInFlight(r, x);
+        _ = try host.state(r.arena);
+        try host.page.waitOutInFlight(r, x);
         if (!x.send()) return sendState(host, r, try freshSnapshot(host, r.arena));
     }
     const result = try enginePageCall(host, r, req.action.method(), args, timeout);
@@ -876,22 +880,39 @@ fn runControlAs(ph: *fake.PageHost, c: *fake.Caller, body: []const u8) !Wire {
 }
 
 /// What the engine page module prints while a control play waits on a launch in flight.
-const starting_line = "waiting for the engine to finish starting";
+const starting_line = engine_page.starting_line;
+
+/// Space, play-next and play-later as the TUI sends them: the body, its page call, and how it
+/// fails on a new page load.
+const control_plays = [_]struct { []const u8, []const u8, ?[]const u8 }{
+    // A new page has nothing queued: the TUI queues its music again from its resume point.
+    .{ "{\"action\":\"toggle\"}", "toggle", not_running },
+    .{ "{\"action\":\"play_next\",\"value\":{\"songs\":[\"1561837008\"]}}", "playNext", null },
+    .{ "{\"action\":\"play_later\",\"value\":{\"songs\":[\"1561837008\"]}}", "playLater", null },
+};
+
+/// What a control play from `control_plays` that waited for the launch got: its page call
+/// reached the launch's page load once it was ready, it made no repair and no launch of its own.
+fn expectLandedOnLaunch(rig: *fake.Rig, wire: Wire, method: []const u8, failure: ?[]const u8) !void {
+    try testing.expectEqualStrings(starting_line ++ "\n", wire.out);
+    try testing.expect(rig.fp.calledOn("1", method));
+    if (failure) |message| {
+        try testing.expectEqual(@as(u8, 1), wire.code);
+        try testing.expectEqualStrings(message, wire.message.?);
+    } else {
+        try testing.expectEqual(@as(u8, 0), wire.code);
+        try testing.expectEqual(playback.Music.starting, rig.fp.held());
+    }
+    try testing.expectEqual(@as(u32, 0), rig.fp.reloads + rig.fp.checks + rig.fp.probes);
+    try testing.expectEqual(@as(u32, 1), rig.launcher.launches);
+}
 
 test "Space, play-next and play-later during a launch in flight wait for its page, then make their page call instead of failing as not configured" {
-    var timing = fake.Rig.timing;
-    timing.launch_wait = .fromSeconds(30);
-    const cases = [_]struct { []const u8, []const u8, ?[]const u8 }{
-        // A new page has nothing queued: the TUI queues its music again from its resume point.
-        .{ "{\"action\":\"toggle\"}", "toggle", not_running },
-        .{ "{\"action\":\"play_next\",\"value\":{\"songs\":[\"1561837008\"]}}", "playNext", null },
-        .{ "{\"action\":\"play_later\",\"value\":{\"songs\":[\"1561837008\"]}}", "playLater", null },
-    };
     // Before the page connected, and while its MusicKit configures.
-    for ([_]fake.FakePage.Op{ .open, .configure }) |held| for (cases) |case| {
+    for ([_]fake.FakePage.Op{ .open, .configure }) |held| for (control_plays) |case| {
         const body, const method, const failure = case;
         var rig: fake.Rig = undefined;
-        rig.init(timing);
+        rig.init(fake.Rig.patientLaunch(fake.Rig.timing));
         defer rig.deinit();
         var ph: fake.PageHost = .{ .rig = &rig };
         // `am play` or the TUI's queue launches the engine and waits for its page.
@@ -906,21 +927,38 @@ test "Space, play-next and play-later during a launch in flight wait for its pag
         defer drop(&controlling);
         try c.printed(starting_line);
         rig.fp.release(held, .answer);
-        const wire = try controlling.await(testing.io);
-        try testing.expectEqualStrings(starting_line ++ "\n", wire.out);
-        try testing.expect(rig.fp.calledOn("1", method));
-        if (failure) |message| {
-            try testing.expectEqual(@as(u8, 1), wire.code);
-            try testing.expectEqualStrings(message, wire.message.?);
-        } else {
-            try testing.expectEqual(@as(u8, 0), wire.code);
-            try testing.expectEqual(playback.Music.starting, rig.fp.held());
-        }
-        // No repair, and no launch of its own.
+        try expectLandedOnLaunch(&rig, try controlling.await(testing.io), method, failure);
         try testing.expect((try starting.await(testing.io)).ready);
-        try testing.expectEqual(@as(u32, 0), rig.fp.reloads + rig.fp.checks + rig.fp.probes);
-        try testing.expectEqual(@as(u32, 1), rig.launcher.launches);
     };
+}
+
+test "Space, play-next and play-later during the launch call, before it set the launch's nonce, wait out the call and then the launch's page" {
+    for (control_plays) |case| {
+        const body, const method, const failure = case;
+        var rig: fake.Rig = undefined;
+        rig.init(fake.Rig.patientLaunch(fake.Rig.timing));
+        defer rig.deinit();
+        var ph: fake.PageHost = .{ .rig = &rig };
+        // The launch call holds the engine and has set no nonce yet, as while it kills a
+        // leftover engine: no launch shows on the channel.
+        rig.fp.hold(.open, 1);
+        rig.launcher.holdLaunch(.before_nonce);
+        var problem: []const u8 = "";
+        var starting = try testing.io.concurrent(engine_page.EnginePage.start, .{ &rig.page, rig.newArena(), &problem });
+        defer drop(&starting);
+        try rig.launcher.arrivedLaunch();
+
+        const c = rig.caller();
+        var controlling = try testing.io.concurrent(runControlAs, .{ &ph, c, body });
+        defer drop(&controlling);
+        // It waits on the engine, which the launch call holds, before it looks for a launch.
+        try ph.askedState(1);
+        rig.launcher.releaseLaunch();
+        try c.printed(starting_line);
+        rig.fp.release(.open, .answer);
+        try expectLandedOnLaunch(&rig, try controlling.await(testing.io), method, failure);
+        try testing.expect((try starting.await(testing.io)).ready);
+    }
 }
 
 test "Space with no engine has no launch to wait for: it fails at once as engine-not-running, for the TUI to queue its music" {
@@ -934,9 +972,7 @@ test "Space with no engine has no launch to wait for: it fails at once as engine
     try testing.expectEqual(@as(u32, 0), rig.launcher.launches);
 }
 
-fn drop(future: anytype) void {
-    if (future.cancel(testing.io)) |_| {} else |_| {}
-}
+const drop = fake.drop;
 
 test "a control call the page never answers is in the daemon's log by method and timeout" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);

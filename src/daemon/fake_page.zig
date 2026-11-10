@@ -202,9 +202,10 @@ pub const FakePage = struct {
         notice,
         /// The answer to `play`, `playQueue`, `playNext` and `playLater`.
         play_queue,
-        /// The answers to `pause`, `resume` (and `toggle`) and `stop`, decided once released.
+        /// The answers to `pause`, `resume`, `toggle` and `stop`, decided once released.
         pause,
         @"resume",
+        toggle,
         stop,
     };
     pub const Release = enum { answer, silent };
@@ -674,8 +675,6 @@ pub const FakePage = struct {
 
     /// The answer's fields (`"ok":…`), or null for none.
     fn run(fp: *FakePage, a: Allocator, index: usize, method: []const u8, gen: ?u64) (Allocator.Error || Io.Cancelable)!?[]const u8 {
-        // app.js `toggle` pauses or resumes: it passes `resume`'s gate.
-        const toggle = std.mem.eql(u8, method, "toggle");
         const op: Op = if (std.mem.eql(u8, method, "snapshot"))
             .snapshot
         else if (std.mem.eql(u8, method, "checkDeveloperToken"))
@@ -688,8 +687,10 @@ pub const FakePage = struct {
             .play_queue
         else if (std.mem.eql(u8, method, "pause"))
             .pause
-        else if (std.mem.eql(u8, method, "resume") or toggle)
+        else if (std.mem.eql(u8, method, "resume"))
             .@"resume"
+        else if (std.mem.eql(u8, method, "toggle"))
+            .toggle
         else if (std.mem.eql(u8, method, "stop"))
             .stop
         else
@@ -706,13 +707,18 @@ pub const FakePage = struct {
             if (load.phase == .unloaded) return null;
             try fp.called.append(fp.gpa, .{ .load = load.id, .method = try fp.arena.allocator().dupe(u8, method) });
             // A toggle on music that plays is a pause, which isn't a load.
-            if (op == .play_queue or (op == .@"resume" and !(toggle and load.music == .playing))) {
+            const loads = switch (op) {
+                .play_queue, .@"resume" => true,
+                .toggle => load.music != .playing,
+                else => false,
+            };
+            if (loads) {
                 fp.next_play_call += 1;
                 play_call = fp.next_play_call;
                 try fp.play_calls.append(fp.gpa, .{ .id = fp.next_play_call, .index = index, .gen = gen orelse load.cancelled_below });
                 load.calls_pending += 1;
                 // app.js takes the stopped station first: the page names none while it restarts.
-                if (op == .@"resume" and load.music == .stopped_live) load.restarting = true;
+                if ((op == .@"resume" or op == .toggle) and load.music == .stopped_live) load.restarting = true;
             }
             break :blk switch (op) {
                 .snapshot => try a.print("\"ok\":true,\"value\":{s}", .{try snapshotOf(a, load.*)}),
@@ -736,7 +742,7 @@ pub const FakePage = struct {
                     fp.reloads += 1;
                     break :reload "\"ok\":true,\"value\":null";
                 },
-                .play_queue, .pause, .@"resume", .stop => null,
+                .play_queue, .pause, .@"resume", .toggle, .stop => null,
                 .open, .configure, .unload, .notice => unreachable,
             };
         };
@@ -763,7 +769,8 @@ pub const FakePage = struct {
                 load.position = 0;
                 return try answerOf(a, load.*, &.{}, null);
             },
-            .@"resume" => if (toggle) try fp.toggleLocked(a, index, call_gen, cancelled) else try fp.resumeLocked(a, index, call_gen, cancelled),
+            .@"resume" => try fp.resumeLocked(a, index, call_gen, cancelled),
+            .toggle => try fp.toggleLocked(a, index, call_gen, cancelled),
             .pause => try fp.pauseLocked(a, load),
             .stop => try fp.stopLocked(a, index, gen),
             else => asked,
@@ -1011,6 +1018,12 @@ pub fn userTokenHash(n: u64) [16]u8 {
     return hash;
 }
 
+/// Ends a caller that a test started on its own task, whatever it came to: for the paths where
+/// the test failed before it awaited the caller.
+pub fn drop(future: anytype) void {
+    if (future.cancel(std.testing.io)) |_| {} else |_| {}
+}
+
 /// The port's test adapter: launches the fake page, as the Daemon launches the browser.
 pub const FakeLauncher = struct {
     fp: *FakePage,
@@ -1024,11 +1037,24 @@ pub const FakeLauncher = struct {
     logged: std.ArrayList([]const u8) = .empty,
     /// The next launch fails with this problem.
     refuse: ?[]const u8 = null,
-    /// The next launch that starts the engine, held where its caller has the launch and
-    /// hasn't recorded it yet; guarded by the fake page's mutex.
+    /// The next launch that starts the engine, held at `hold_at`; both guarded by the fake
+    /// page's mutex.
     held: Hold = .off,
+    hold_at: HoldAt = .after_call,
 
     const Hold = enum { off, armed, waiting, released };
+
+    /// Where `holdLaunch` holds the next launch that starts the engine.
+    pub const HoldAt = enum {
+        /// In the launch call, with the launcher's mutex held and no nonce set yet: as the
+        /// Daemon's launch call while it finds the browser, kills leftovers and writes the
+        /// profile. A relaunch has closed the old browser by then.
+        before_nonce,
+        /// After the launch call set the nonce, opened the page and returned, with the
+        /// launcher's mutex free: as a caller that has the launch from the Daemon and hasn't
+        /// recorded it yet. A launch call meanwhile finds the engine running.
+        after_call,
+    };
 
     const Live = struct { generation: u64, at: Io.Timestamp, pid: @import("../platform.zig").ProcessId };
 
@@ -1046,15 +1072,13 @@ pub const FakeLauncher = struct {
         return @ptrCast(@alignCast(ptr));
     }
 
-    /// The next launch that starts the engine sets the launch's nonce and opens the page, then
-    /// waits until `releaseLaunch` before it returns, with the launcher's mutex free: as a
-    /// caller that has the launch from the Daemon and hasn't recorded it yet. A launch call
-    /// meanwhile finds the engine running.
-    pub fn holdLaunch(fl: *FakeLauncher) void {
+    /// The next launch that starts the engine waits at `at` until `releaseLaunch`.
+    pub fn holdLaunch(fl: *FakeLauncher, at: HoldAt) void {
         const fp = fl.fp;
         fp.mutex.lockUncancelable(fp.io);
         defer fp.mutex.unlock(fp.io);
         fl.held = .armed;
+        fl.hold_at = at;
     }
 
     /// Waits until the held launch waits; fails after 2 s.
@@ -1082,16 +1106,16 @@ pub const FakeLauncher = struct {
     fn launch(ptr: *anyopaque, arena: Allocator, how: engine_page.Launch.How, problem: *[]const u8) host_mod.EngineError!engine_page.Launch {
         const fl = of(ptr);
         const got = try fl.launchLocked(arena, how, problem);
-        if (got.launched) try fl.passHold();
+        if (got.launched) try fl.passHold(.after_call);
         return got;
     }
 
-    /// Waits at the launch hold when it is armed.
-    fn passHold(fl: *FakeLauncher) Io.Cancelable!void {
+    /// Waits at the launch hold when it is armed at `at`.
+    fn passHold(fl: *FakeLauncher, at: HoldAt) Io.Cancelable!void {
         const fp = fl.fp;
         fp.mutex.lockUncancelable(fp.io);
         defer fp.mutex.unlock(fp.io);
-        if (fl.held != .armed) return;
+        if (fl.held != .armed or fl.hold_at != at) return;
         fl.held = .waiting;
         fp.changed.broadcast(fp.io);
         while (fl.held == .waiting and !fp.closing) try fp.changed.wait(fp.io, &fp.mutex);
@@ -1120,6 +1144,7 @@ pub const FakeLauncher = struct {
                 },
             }
         };
+        try fl.passHold(.before_nonce);
         const nonce = channel_mod.newNonce(io);
         fl.fp.channel.setNonce(nonce);
         fl.launches += 1;
@@ -1203,6 +1228,13 @@ pub const Rig = struct {
         .send = .fromMilliseconds(500),
         .step = .fromMilliseconds(20),
     };
+
+    /// `t`, and a launch held at a gate has all the time it needs.
+    pub fn patientLaunch(t: engine_page.Timing) engine_page.Timing {
+        var patient = t;
+        patient.launch_wait = .fromSeconds(30);
+        return patient;
+    }
 
     pub fn init(r: *Rig, t: engine_page.Timing) void {
         const io = std.testing.io;
@@ -1323,13 +1355,13 @@ pub const Caller = struct {
         return c.ran(.{ .if_idle = .{ .user_token_ok = user_token_ok } }, true);
     }
 
-    /// A play that makes no repair (Space, `am resume`, play-next, play-later): begins, joins a
-    /// launch and a reload in flight, sends `method` over the channel, and ends once the page
-    /// answered.
+    /// A play that makes no repair (Space, `am resume`, play-next, play-later): begins, waits
+    /// for a launch and joins a reload in flight (`waitOutInFlight`), sends `method` over the
+    /// channel, and ends once the page answered.
     pub fn controlPlay(c: *Caller, method: []const u8) !void {
         var p = c.rig.plays.begin();
         defer p.end();
-        try c.rig.page.page().joinInFlight(&c.t.reply, &p);
+        try c.rig.page.page().waitOutInFlight(&c.t.reply, &p);
         try c.rig.sendMusic(&p, method);
     }
 
@@ -1404,6 +1436,9 @@ pub const PageHost = struct {
     report_older_by_ms: u64 = 0,
     /// Runs once, before the `nth` page call of its method goes out.
     before_call: ?BeforeCall = null,
+    /// How often an endpoint asked for the state, counted before `state` takes the launcher's
+    /// mutex: one that a launch call holds waits there.
+    state_asks: std.atomic.Value(u32) = .init(0),
     claims: u64 = 0,
     /// Guards `before_call`, `claims`, `called` and `logged`: callers run at once.
     mutex: Io.Mutex = .init,
@@ -1460,6 +1495,14 @@ pub const PageHost = struct {
         _ = try ph.rig.launcher.port().vtable.launch(&ph.rig.launcher, ph.rig.newArena(), .launch, &problem);
     }
 
+    /// Waits until the endpoints asked for the state `n` times; fails after 2 s.
+    pub fn askedState(ph: *PageHost, n: u32) !void {
+        const deadline: Deadline = .after(ph.rig.io, .fromSeconds(2));
+        while (ph.state_asks.load(.acquire) < n) {
+            if (!try deadline.sleep(.fromMilliseconds(1))) return error.NeverAsked;
+        }
+    }
+
     /// Whether the endpoints made a page call starting with `method_and_args`.
     pub fn wasCalled(ph: *PageHost, method_and_args: []const u8) bool {
         ph.mutex.lockUncancelable(ph.rig.io);
@@ -1510,6 +1553,7 @@ pub const PageHost = struct {
     fn state(ptr: *anyopaque, arena: Allocator) Allocator.Error!host_mod.State {
         const ph = of(ptr);
         const rig = ph.rig;
+        _ = ph.state_asks.fetchAdd(1, .release);
         var s: host_mod.State = .{ .engine = null, .report = null };
         if (ph.signin_window) {
             s.engine = .{ .kind = "firefox", .pid = 77, .headless = false, .signin_window = true, .idle_close_in_s = ph.idle_close_in_s };

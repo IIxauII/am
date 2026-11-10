@@ -19,8 +19,8 @@ One start of the engine (the browser) by the daemon, with a nonce of its own: on
 _Avoid_: session, boot
 
 **Launch in flight**:
-A launch whose engine page isn't ready yet (connected, with MusicKit configured or failed to). It ends once the page is ready, when the launch wait (90 s from the launch) runs out, or with the launch. A control play (Space, `am resume`, play-next, play-later) waits for it before its page call, as it joins a reload in flight, and never repairs.
-_Avoid_: pending launch, cold start
+A launch whose engine page isn't ready yet (connected, with MusicKit configured or failed to), from the daemon's launch call on. It ends once the page is ready, when the launch wait (90 s from the launch) runs out, with the launch, or once a reload of its page is recorded: the reload's new page load is then the one to wait for. A control play (Space, `am resume`, play-next, play-later) waits for it before its page call, as it joins a reload in flight, and never repairs.
+_Avoid_: pending launch
 
 **Page load**:
 One load of the engine page within a launch, named by the `load` id in its reports. A reload keeps the launch's nonce and starts a new page load.
