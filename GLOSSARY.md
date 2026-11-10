@@ -65,6 +65,16 @@ _Avoid_: kept, skipped
 A page load whose MusicKit doesn't hold the stored Music User Token: its report names another one (`musicUserToken`, a hash as for the developer token). A page load that names none (an older page, a browser that can't hash, MusicKit holding none) is behind when it began before the last sign-in stored a new token, since it may still use the old one. The next repair for a play reloads it first.
 _Avoid_: stale token, page token
 
+### When the engine runs
+
+**Idle close**:
+The background process closing the engine after `ENGINE_IDLE_MINUTES` with nothing playing and nothing using it.
+_Avoid_: timeout, sleep
+
+**Keep-alive**:
+The setting that keeps the engine launched for as long as a TUI that has it on is open.
+_Avoid_: warm mode, always-on
+
 ### Settings
 
 **Setting**:
