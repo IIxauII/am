@@ -42,7 +42,7 @@ pub const FakePage = struct {
     mutex: Io.Mutex = .init,
     /// Broadcast on every change to the loads and the gates.
     changed: Io.Condition = .init,
-    /// Held by a report from its snapshot to its post; taken before `mutex`.
+    /// Held by a report from its snapshot until the channel has it; taken before `mutex`.
     reporting: Io.Mutex = .init,
     /// The load tasks and the command handlers.
     tasks: Io.Group = .init,
@@ -311,7 +311,7 @@ pub const FakePage = struct {
         load.station_name = h.station_name;
     }
 
-    /// The current load posts its report now, as its timer would, so the channel's last
+    /// The current load sends its report now, as its timer would, so the channel's last
     /// report is what it holds.
     pub fn reportNow(fp: *FakePage) Io.Cancelable!void {
         const index = blk: {
@@ -550,8 +550,9 @@ pub const FakePage = struct {
         return false;
     }
 
-    /// Posts the load's report, as app.js's timer does; an unloaded load sends none. One at a
-    /// time, from its snapshot to its post: a report posted after `reportNow` was taken after it.
+    /// Sends the load's report, as app.js's timer does over its report socket; an unloaded load
+    /// sends none. One at a time, from its snapshot until the channel has it: a report sent after
+    /// `reportNow` was taken after it.
     fn report(fp: *FakePage, index: usize) Io.Cancelable!void {
         fp.reporting.lockUncancelable(fp.io);
         defer fp.reporting.unlock(fp.io);

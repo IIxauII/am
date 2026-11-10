@@ -1,5 +1,6 @@
-// MusicKit JS v3 playback engine page. Browser-agnostic: the CLI drives it over SSE (/events)
-// and it reports state back with POSTs, so the same page runs in Chrome or Firefox.
+// MusicKit JS v3 playback engine page. Browser-agnostic: the CLI drives it over SSE (/events),
+// and it reports state back over a WebSocket (/reports) and command results with POSTs, so the
+// same page runs in Chrome or Firefox.
 'use strict'
 
 const params = new URLSearchParams(location.search)
@@ -1090,6 +1091,7 @@ function connect() {
     }
     fetch('/result', { method: 'POST', body: JSON.stringify(reply) })
   }
+  const sendReport = reportSocket(`ws://${location.host}/reports?engine=${ENGINE}`)
   let last = 0
   let trailing = null
   report = () => {
@@ -1104,9 +1106,31 @@ function connect() {
       return
     }
     last = Date.now()
-    fetch('/report', { method: 'POST', body: JSON.stringify(snapshot()), keepalive: true }).catch(() => {})
+    sendReport(JSON.stringify(snapshot()))
   }
   setInterval(report, 1000)
+}
+
+// Sends each report over one WebSocket per page load: a new HTTP request a second costs the
+// browser memory it never gives back. A socket that closes (the daemon restarted, say) is opened
+// again by the next report, which goes out once it opens.
+function reportSocket(url) {
+  let socket = null
+  let unsent = null // the latest report while the socket opens
+  return (body) => {
+    if (socket?.readyState === WebSocket.OPEN) return socket.send(body)
+    unsent = body
+    if (socket) return
+    const opening = new WebSocket(url)
+    opening.onopen = () => {
+      opening.send(unsent)
+      unsent = null
+    }
+    opening.onclose = () => {
+      if (socket === opening) socket = null
+    }
+    socket = opening
+  }
 }
 
 // Engine pages must hold the current launch nonce; a stale restored copy unloads itself.

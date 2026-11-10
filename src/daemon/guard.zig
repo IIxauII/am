@@ -19,7 +19,8 @@ pub fn hostAllowed(host: ?[]const u8, port: u16) bool {
 
 /// A request without an Origin header passes (the CLI, and the page's same-origin GETs). With one,
 /// it must be one of our own loopback origins: otherwise any website open in the user's browser
-/// could POST a Music User Token or a fake report.
+/// could POST a Music User Token, or open the report socket (WebSockets ignore CORS) and send fake
+/// reports.
 pub fn originAllowed(origin: ?[]const u8, port: u16) bool {
     const o = origin orelse return true;
     const prefix = "http://";

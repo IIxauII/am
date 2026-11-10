@@ -1,6 +1,7 @@
-//! The channel between the background process and the engine page, carried over unchanged from
-//! the Node POC: commands go to the page over Server-Sent Events (`GET /events`), state comes
-//! back as `POST /report` about once a second and command results as `POST /result`.
+//! The channel between the background process and the engine page, carried over from the Node
+//! POC: commands go to the page over Server-Sent Events (`GET /events`), state comes back about
+//! once a second over the report socket (a WebSocket, `GET /reports`) and command results as
+//! `POST /result`.
 //!
 //! Each engine launch has a nonce. Only a page carrying the current one may claim the channel,
 //! open an event stream or report: a relaunched Firefox may restore the previous engine page next
@@ -45,7 +46,7 @@ pub const Channel = struct {
     seq: u64 = 0,
     next_id: u64 = 1,
     pending: std.ArrayList(Pending) = .empty,
-    /// The latest report from the current page: its JSON as posted.
+    /// The latest report from the current page: its JSON as sent.
     report: ?[]u8 = null,
     report_at: ?Io.Clock.Timestamp = null,
     /// Bumped with every accepted report.
@@ -198,7 +199,7 @@ pub const Channel = struct {
 
     pub const ReportVerdict = enum { accepted, stale, invalid };
 
-    /// `POST /report`: kept only if it carries the current nonce (else 409).
+    /// A message on the report socket (`/reports`): kept only if it carries the current nonce.
     pub fn postReport(c: *Channel, body: []const u8) Allocator.Error!ReportVerdict {
         var arena: std.heap.ArenaAllocator = .init(c.gpa);
         defer arena.deinit();
