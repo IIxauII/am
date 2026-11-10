@@ -158,8 +158,9 @@ pub const ArtworkState = struct {
     /// Why `v` changes only the session (`AM_IMAGES is set`, `settings.json isn't valid JSON`);
     /// null when it saves the setting.
     session_only: ?[]const u8 = null,
-    /// What Images shows instead in this terminal, and why; null when it shows kitty images.
-    /// The app keeps it current.
+    /// What Images shows instead in this terminal, and why; null when it shows kitty images, and
+    /// before the graphics query's answer unless the reason doesn't wait for it (tmux,
+    /// TERM=dumb). The app keeps it current.
     fallback: ?graphics.Fallback = null,
 };
 
