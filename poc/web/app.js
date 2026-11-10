@@ -842,8 +842,8 @@ const am = {
     return load(gen, async (ctx) => {
       const { check, playing, takeMusic } = ctx
       if (req.station || req.stationFor) {
-        const [kind, id] = req.station ? ['station', req.station] : req.stationFor.song ? ['song', req.stationFor.song] : ['artist', req.stationFor.artist]
-        if (!id) throw new Error('stationFor needs a song or an artist')
+        // Before the rewind: a request that can't play leaves the song alone.
+        if (!req.station && !req.stationFor.song && !req.stationFor.artist) throw new Error('stationFor needs a song or an artist')
         await takeMusic()
         const late = []
         await rewindSong(late)
@@ -851,9 +851,10 @@ const am = {
         music.autoplayEnabled = autoplay
         stoppedLive = null
         if (req.station) {
-          context = { type: 'stations', id, name: null }
-          await music.setQueue({ station: id })
+          context = { type: 'stations', id: req.station, name: null }
+          await music.setQueue({ station: req.station })
         } else {
+          const [kind, id] = req.stationFor.song ? ['song', req.stationFor.song] : ['artist', req.stationFor.artist]
           context = null
           await music.setStationQueue({ [kind]: id })
         }
@@ -928,7 +929,8 @@ const am = {
     return answer(late)
   },
   // Not music.stop(): after it, Firefox's content process and Widevine helper often keep messaging
-  // each other at ~120 % CPU (macOS, Firefox 158) until the engine closes. The song stays loaded.
+  // each other at ~120 % CPU (macOS, Firefox 158 and 159) until a page reload, the next song or the
+  // engine's close. The song stays loaded.
   // Live radio has no pause, so it does stop.
   // Every wait is bounded (at most about 5 s in all). Still playing after the pause, it fails with
   // the reason and doesn't seek. Silent, it answers as stopped: paused at 0:00 when the seek lands,

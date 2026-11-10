@@ -1079,7 +1079,7 @@ function songMusic(state) {
   })
   const replace = (what) => {
     m.call(`${what} over ${stateName(m.playbackState)} at ${m.currentPlaybackTime}`)
-    m.nowPlayingItem = { id: 'ra.2', title: 'Radio', isLiveRadioStation: true }
+    m.nowPlayingItem = { ...radio, id: 'ra.2' }
     m.playbackState = S.loading
     return Promise.resolve()
   }
@@ -1108,9 +1108,27 @@ for (const [what, req, queued] of [
   }
 }
 
+test('a station queued over a song paused at 0:00 replaces it at once: there is nothing to rewind', async () => {
+  const m = songMusic(S.paused)
+  m.currentPlaybackTime = 0
+  const { ms } = await timed(() => page(m).playQueue({ station: 'ra.2' }, 0))
+  assert.equal(ms, 0)
+  assert.deepEqual(m.calls, ['setQueue ra.2 over paused at 0', 'play'])
+})
+
+test('a station whose rewind of the song never settles still plays, about 2 s later, with the give-up', async () => {
+  const m = songMusic(S.paused)
+  m.seekToTime = (t) => (m.call(`seek ${t}`), stuckSeek(t, m))
+  const { value, ms } = await timed(() => page(m).playQueue({ station: 'ra.2' }, 0))
+  assert.equal(ms, SETTLE_MS)
+  assert.deepEqual(m.calls, ['seek 0', 'setQueue ra.2 over seeking at 12', 'play'])
+  assert.deepEqual(plain(value.gaveUp), [`seekToTime(0) after ${secs(SETTLE_MS)}`])
+  assert.equal(value.playbackState, 'playing')
+})
+
 test('a station queued over live radio replaces it at once: live radio has no pause, and plays in its own player', async () => {
   const m = songMusic(S.playing)
-  m.nowPlayingItem = { id: 'ra.1', title: 'Radio', isLiveRadioStation: true }
+  m.nowPlayingItem = radio
   // MusicKit's pause() does nothing on live radio.
   m.pause = () => (m.call('pause'), Promise.resolve())
   const { ms } = await timed(() => page(m).playQueue({ station: 'ra.2' }, 0))
