@@ -1462,17 +1462,19 @@ test "keys only some terminals tell apart work as the shared key, in a list and 
     u.key(.ctrlChar('['), 0);
     try testing.expectEqual(Focus.sidebar, u.focus);
 
-    // In a text field: Ctrl+i switches catalog / library, Ctrl+j searches, Ctrl+[ leaves.
+    // In a text field: Ctrl+i switches catalog / library, Ctrl+[ leaves, Ctrl+j searches.
     u.key(.char('/'), 0);
     _ = takeEffects(&u);
     const s = u.current().?.search.?;
     for ("queen") |c| u.key(.char(c), 0);
     u.key(.ctrlChar('i'), 0);
     try testing.expect(s.library);
-    u.key(.ctrlChar('j'), 0);
-    try testing.expectEqualStrings("queen", s.submitted.items);
     u.key(.ctrlChar('['), 0);
     try testing.expect(!u.textMode());
+    try testing.expectEqual(Focus.sidebar, u.focus);
+    u.key(.char('/'), 0);
+    u.key(.ctrlChar('j'), 0);
+    try testing.expectEqualStrings("queen", s.submitted.items);
 }
 
 test "^c quits from a list, a text field and the help; q types in a field" {
