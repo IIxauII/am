@@ -290,8 +290,6 @@ pub const App = struct {
     kitty_ok: bool = false,
     probe_done: bool = false,
     probe_deadline: i64 = 0,
-    /// `AM_IMAGES`, read at start.
-    images: settings_mod.Images = .auto,
     cell_w: u16 = 0,
     cell_h: u16 = 0,
     slots: std.ArrayList(views.ImageSlot) = .empty,
@@ -300,6 +298,12 @@ pub const App = struct {
     frame_arena: std.heap.ArenaAllocator,
 
     log: Log,
+    /// settings.json's settings, with AM_IMAGES over its artwork: read once, at start
+    /// (`loadSettings`), into `settings_arena`.
+    tui_settings: settings_mod.Tui = .{},
+    settings_arena: std.heap.ArenaAllocator,
+    /// The first problem with settings.json went to the status line.
+    settings_told: bool = false,
     /// The watch task runs (it starts once signed in, so a setup screen starts no daemon).
     watching: bool = false,
     /// Set to leave: true to stop everything (`Q`), false to keep what still has a use.
@@ -332,6 +336,7 @@ pub const App = struct {
             .ui = .init(o.gpa),
             .frame_arena = .init(o.gpa),
             .log = .open(o.io, o.settings.tui_log),
+            .settings_arena = .init(o.gpa),
         };
         app.events = .init(&app.event_buf);
         app.api_pool = .init(&app.api_buf);
@@ -342,9 +347,29 @@ pub const App = struct {
         var id_bytes: [8]u8 = undefined;
         o.io.random(&id_bytes);
         app.link.client_id = std.fmt.bytesToHex(id_bytes, .lower);
-        app.images = o.settings.images;
+        app.loadSettings(o.settings.images);
         app.loadState();
         return app;
+    }
+
+    /// settings.json, once: the TUI never reads it again, and nothing watches it. A file am
+    /// can't use leaves the defaults, and the first problem goes to the status line once signed
+    /// in (`becomeReady`).
+    fn loadSettings(app: *App, images: ?settings_mod.Images) void {
+        app.tui_settings = settings_mod.loadTui(app.io, app.settings_arena.allocator(), app.config_dir, images) catch .{};
+        for (app.tui_settings.problems) |p| app.log.print("{s}", .{p});
+        app.ui.artwork = .{
+            .setting = app.tui_settings.artwork,
+            .session_only = app.tui_settings.artworkSessionOnly(),
+            .fallback = app.artworkFallback(),
+        };
+    }
+
+    /// What Images shows instead of kitty images in this terminal, and why. Before the graphics
+    /// query's answer, only what doesn't wait for it (TERM=dumb, tmux): `finishProbe` brings the
+    /// rest.
+    fn artworkFallback(app: *const App) ?graphics.Fallback {
+        return graphics.fallback(app.environ, app.kitty_ok or !app.probe_done, app.tui_settings.images);
     }
 
     pub fn run(app: *App) !void {
@@ -539,7 +564,13 @@ pub const App = struct {
     fn finishProbe(app: *App) void {
         if (app.probe_done) return;
         app.probe_done = true;
-        app.setProtocol(graphics.choose(app.environ, app.kitty_ok, app.images));
+        app.ui.artwork.fallback = app.artworkFallback();
+        app.setProtocol(app.artworkProtocol(app.ui.artwork.setting));
+    }
+
+    /// What the artwork setting draws with in this terminal.
+    fn artworkProtocol(app: *App, setting: graphics.Artwork) graphics.Protocol {
+        return graphics.protocolFor(app.environ, app.kitty_ok, setting, app.tui_settings.images);
     }
 
     fn setProtocol(app: *App, p: graphics.Protocol) void {
@@ -556,24 +587,25 @@ pub const App = struct {
         app.dirty = true;
     }
 
-    fn cycleImages(app: *App) void {
-        const kitty: graphics.Protocol = if (graphics.choose(app.environ, true, .kitty) == .kitty_placeholders) .kitty_placeholders else .kitty_placements;
-        const can_kitty = app.kitty_ok or switch (app.images) {
-            .kitty, .placeholders, .placements => true,
-            .auto, .blocks, .off => false,
+    /// `v` picked `setting`. Before the graphics query's answer, the answer picks for it
+    /// (`finishProbe`).
+    fn setArtwork(app: *App, setting: graphics.Artwork) void {
+        if (app.probe_done) app.setProtocol(app.artworkProtocol(setting));
+    }
+
+    /// Saves one change to settings.json, on top of what the file holds now. A file am can't
+    /// write back stays as it is, and the status line says why.
+    fn saveSetting(app: *App, change: settings_mod.Change) void {
+        var arena: std.heap.ArenaAllocator = .init(app.gpa);
+        defer arena.deinit();
+        const saved = settings_mod.saveChange(app.io, arena.allocator(), app.config_dir, change) catch |e| {
+            app.log.print("can't save settings.json: {t}", .{e});
+            return app.toastFmt("Not saved to settings.json ({t})", .{e}, .err);
         };
-        const next: graphics.Protocol = switch (app.protocol) {
-            .kitty_placeholders, .kitty_placements => .half_blocks,
-            .half_blocks => .none,
-            .none => if (can_kitty) kitty else .half_blocks,
-        };
-        app.setProtocol(next);
-        app.toast(switch (next) {
-            .kitty_placeholders => "Artwork: kitty images (placeholders)",
-            .kitty_placements => "Artwork: kitty images",
-            .half_blocks => "Artwork: half blocks",
-            .none => "Artwork: off",
-        }, .info);
+        switch (saved) {
+            .saved, .unchanged => {},
+            .refused => |why| app.toastFmt("Not saved: {s}", .{why}, .err),
+        }
     }
 
     fn onResize(app: *App, resumed: bool) void {
@@ -642,7 +674,7 @@ pub const App = struct {
         if (k.super) return;
         app.dirty = true;
         const now = app.nowMs();
-        if (k.ctrl and k.code == .char and k.code.char == 'z') {
+        if (keys.fixed(k) == .suspend_process) {
             app.terminal.suspendProcess();
             app.onResize(app.terminal.resumed());
             return;
@@ -662,18 +694,13 @@ pub const App = struct {
             };
             if (ak) |key| return app.authEffect(app.machine.key(key, now));
             // The sign-in box over the session: the music keeps answering its keys.
-            if (app.machine.in_session) if (keys.command(k)) |cmd| switch (cmd) {
-                .toggle, .next, .previous, .seek, .volume, .mute => {
-                    app.ui.command(cmd, now);
-                    app.afterUi();
-                },
-                else => {},
-            };
+            if (app.machine.in_session) {
+                app.ui.playerKey(k, now);
+                app.afterUi();
+            }
             return;
         }
-        if (app.ui.textMode()) {
-            if (keys.textCommand(k)) |cmd| app.ui.text(cmd, now);
-        } else if (keys.command(k)) |cmd| app.ui.command(cmd, now);
+        app.ui.key(k, now);
         app.afterUi();
     }
 
@@ -712,6 +739,12 @@ pub const App = struct {
         s.user_token = a.dupe(u8, r.user_token) catch "";
         // The check's token is the newest; a renewal from before it is spent.
         app.replaced.clear(app.io, app.gpa);
+        // A bad settings.json never stops am: it says so once, at startup. Before the token's
+        // messages, which need doing sooner and so take the status line when they come too.
+        if (!app.settings_told) {
+            app.settings_told = true;
+            if (app.tui_settings.problems.len > 0) app.toast(app.tui_settings.problems[0], .err);
+        }
         if (r.expiring_soon) app.toast("The developer token expires within two weeks: run am token --key-stdin", .info);
         if (r.own_problem) |why| app.toastFmt("Your own developer token isn't used ({s}); the shared one is", .{why}, .info);
         app.log.print("ready, storefront {s}", .{r.storefront});
@@ -765,10 +798,6 @@ pub const App = struct {
                 app.submitJob(&app.api_pool, .{ .related = .{ .item = v.list.rows.items[g.ref.row].item, .artist = g.artist } });
             },
             .quit => |q| app.quit = q.stop,
-            .suspend_process => {
-                app.terminal.suspendProcess();
-                app.onResize(app.terminal.resumed());
-            },
             .redraw => {
                 app.full_repaint = true;
                 if (app.protocol == .kitty_placeholders or app.protocol == .kitty_placements) {
@@ -777,7 +806,8 @@ pub const App = struct {
                     app.placed.clearRetainingCapacity();
                 }
             },
-            .image_mode => app.cycleImages(),
+            .set_artwork => |a| app.setArtwork(a),
+            .save_setting => |c| app.saveSetting(c),
             .toast => |t| app.toast(t, .info),
             .signin => app.authEffect(app.machine.signinAgain(app.nowMs())),
         }
@@ -1424,6 +1454,7 @@ pub const App = struct {
         app.slots.deinit(app.gpa);
         app.placed.deinit(app.gpa);
         app.frame_arena.deinit();
+        app.settings_arena.deinit();
         app.log.close();
         app.gpa.destroy(app);
     }
@@ -2367,6 +2398,37 @@ test "the TUI logs to the file AM_TUI_LOG names" {
     try testing.expectEqualStrings("ready, storefront gb\n", try tmp.dir.readFileAlloc(testing.io, "tui.log", a, .limited(4096)));
 }
 
+test "before the graphics query's answer, v's message names only what Images falls back to without it" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(testing.io, &buf)];
+    const settings: settings_mod.Settings = .{};
+
+    var ghostty: std.process.Environ.Map = .init(a);
+    try ghostty.put("TERM_PROGRAM", "ghostty");
+    const app = try App.create(.{ .io = testing.io, .gpa = testing.allocator, .environ = &ghostty, .config_dir = dir, .settings = &settings, .port = 1 });
+    defer app.destroy();
+    // No answer yet is not "no answer": nothing to name.
+    try testing.expectEqual(@as(?graphics.Fallback, null), app.ui.artwork.fallback);
+    // The query ran out with no yes.
+    app.probe_done = true;
+    try testing.expectEqualStrings("no answer to the graphics query", app.artworkFallback().?.why);
+    app.kitty_ok = true;
+    try testing.expectEqual(@as(?graphics.Fallback, null), app.artworkFallback());
+
+    // tmux doesn't wait for the answer.
+    var tmux: std.process.Environ.Map = .init(a);
+    try tmux.put("TERM_PROGRAM", "ghostty");
+    try tmux.put("TMUX", "/tmp/tmux-501/default,1,0");
+    const in_tmux = try App.create(.{ .io = testing.io, .gpa = testing.allocator, .environ = &tmux, .config_dir = dir, .settings = &settings, .port = 1 });
+    defer in_tmux.destroy();
+    try testing.expectEqualStrings("inside tmux", in_tmux.ui.artwork.fallback.?.why);
+}
+
 test "playing the remembered queue again copies it before freeing it" {
     const gpa = Poison.allocator();
     var slot: ?QueueMemo = null;
@@ -2458,7 +2520,7 @@ const TestApp = struct {
 
     /// A songs view with these library songs, nothing loading.
     fn songs(t: *TestApp, items: []const Item) !*View {
-        t.app.ui.command(.{ .section = .songs }, 0);
+        t.app.ui.key(.char('3'), 0);
         t.app.ui.effectsDone();
         const v = t.app.ui.current().?;
         v.list.loading = false;
@@ -2494,8 +2556,7 @@ test "a full pool: a load stops its spinner, f puts the heart back, Enter rememb
     Filler.fill(&app.write_pool, &write_fill);
     Filler.fill(&app.daemon_pool, &daemon_fill);
 
-    app.ui.command(.{ .section = .songs }, 0);
-    app.afterUi();
+    app.onKey(.char('3'));
     const v = app.ui.current().?;
     try testing.expect(!v.list.loading);
     try testing.expect(v.list.failed != null);
@@ -2503,8 +2564,7 @@ test "a full pool: a load stops its spinner, f puts the heart back, Enter rememb
     var s = librarySong("i.1");
     s.favorited = false;
     try v.list.appendPage(&.{s}, null, 1);
-    app.ui.command(.favorite, 0);
-    app.afterUi();
+    app.onKey(.char('f'));
     try testing.expectEqual(@as(?bool, false), v.list.rows.items[0].item.favorited);
     try testing.expectEqualStrings(busy_text, app.toast_text.get());
 
@@ -2679,6 +2739,28 @@ fn takeJob(pool: *jobs.Pool) !*Job {
     return @alignCast(@fieldParentPtr("task", task));
 }
 
+test "the sign-in box over the session: the player's keys still answer, the others wait" {
+    var t: TestApp = undefined;
+    try t.init();
+    defer t.deinit();
+    t.signIn();
+    const app = t.app;
+    _ = try t.songs(&.{librarySong("i.1")});
+    app.machine.phase = .signing_in;
+    app.machine.in_session = true;
+
+    app.onKey(.char('1'));
+    app.onKey(.char('f'));
+    try testing.expectEqual(keys.Section.songs, app.ui.section);
+    try testing.expectEqual(@as(usize, 0), app.write_pool.pending());
+    try testing.expectEqual(@as(usize, 0), app.daemon_pool.pending());
+
+    app.onKey(.char(' '));
+    const job = try takeJob(&app.daemon_pool);
+    defer job.destroy();
+    try testing.expectEqual(player.Action.toggle, job.kind.control.action);
+}
+
 test "f on the playing song: Now Playing's heart flips too, and a failure puts both back" {
     var t: TestApp = undefined;
     try t.init();
@@ -2692,8 +2774,7 @@ test "f on the playing song: Now Playing's heart flips too, and a failure puts b
     now.favorited = false;
     app.now_item = now;
 
-    app.ui.command(.favorite, 0);
-    app.afterUi();
+    app.onKey(.char('f'));
     try testing.expectEqual(@as(?bool, true), v.list.rows.items[0].item.favorited);
     try testing.expectEqual(@as(?bool, true), app.now_item.?.favorited);
 
@@ -2722,8 +2803,7 @@ test "F: the playing song's row in the list flips too, and a favorite Apple keep
     now.favorited = true;
     app.now_item = now;
 
-    app.ui.command(.favorite_now, 0);
-    app.afterUi();
+    app.onKey(.char('F'));
     try testing.expectEqual(@as(?bool, false), app.now_item.?.favorited);
     try testing.expectEqual(@as(?bool, false), v.list.rows.items[0].item.favorited);
     try testing.expectEqual(@as(?bool, true), v.list.rows.items[1].item.favorited);

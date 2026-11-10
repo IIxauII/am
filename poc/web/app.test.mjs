@@ -1064,6 +1064,122 @@ test('the snapshot names stopped live radio until a play, a queue load or a rest
   assert.equal(am.snapshot().stoppedLive, null)
 })
 
+// A station queued over a song. MusicKit stop()s the song's player as the station replaces it,
+// and on a song past 0:00 that keeps Firefox at ~120 % CPU; on one paused at 0:00 it doesn't.
+
+const stateName = (state) => Object.keys(S).find((k) => S[k] === state)
+
+// A fake with Little Wing loaded at 0:12, `state` (playing or paused). Its pause and seek land
+// after a moment, and a station queue replaces the song; `pause`, `seek` and `queue` do those
+// steps instead. The station queues note what they replace: its state and time.
+function songMusic(state, { pause, seek, queue } = {}) {
+  const m = fakeMusic({
+    state,
+    pause: pause ?? (() => sleep(100).then(() => (m.playbackState = S.paused))),
+    seek: seek ?? ((t) => sleep(100).then(() => (m.currentPlaybackTime = t))),
+  })
+  const replace = (what) => {
+    m.call(`${what} over ${stateName(m.playbackState)} at ${m.currentPlaybackTime}`)
+    if (queue) return queue()
+    m.nowPlayingItem = { ...radio, id: 'ra.2' }
+    m.playbackState = S.loading
+    return Promise.resolve()
+  }
+  m.setQueue = (o) => replace(`setQueue ${o.station}`)
+  m.setStationQueue = (o) => replace(`setStationQueue ${o.song ?? o.artist}`)
+  m.play = () => (m.call('play'), (m.playbackState = S.playing), Promise.resolve())
+  return m
+}
+
+for (const [what, req, queued] of [
+  ['station', { station: 'ra.2' }, 'setQueue ra.2'],
+  ['station for a song', { stationFor: { song: '7' } }, 'setStationQueue 7'],
+  ['station for an artist', { stationFor: { artist: '9' } }, 'setStationQueue 9'],
+]) {
+  // Paused already, it needs no pause, as `am stop` needs none.
+  for (const [how, state, pause] of [
+    ['playing', S.playing, ['pause']],
+    ['paused', S.paused, []],
+  ]) {
+    test(`a ${what} queued over a ${how} song pauses and rewinds it first`, async () => {
+      const m = songMusic(state)
+      const value = await page(m).playQueue(req, 0)
+      assert.deepEqual(m.calls, [...pause, 'seek 0', `${queued} over paused at 0`, 'play'])
+      assert.equal(value.gaveUp, undefined)
+      assert.equal(value.playbackState, 'playing')
+    })
+  }
+}
+
+test('a station queued over a song paused at 0:00 replaces it at once: there is nothing to rewind', async () => {
+  const m = songMusic(S.paused)
+  m.currentPlaybackTime = 0
+  const { ms } = await timed(() => page(m).playQueue({ station: 'ra.2' }, 0))
+  assert.equal(ms, 0)
+  assert.deepEqual(m.calls, ['setQueue ra.2 over paused at 0', 'play'])
+})
+
+test('a station whose rewind of the song never settles still plays, about 2 s later, with the give-up', async () => {
+  const m = songMusic(S.paused, { seek: stuckSeek })
+  const { value, ms } = await timed(() => page(m).playQueue({ station: 'ra.2' }, 0))
+  assert.equal(ms, SETTLE_MS)
+  assert.deepEqual(m.calls, ['seek 0', 'setQueue ra.2 over seeking at 12', 'play'])
+  assert.deepEqual(plain(value.gaveUp), [`seekToTime(0) after ${secs(SETTLE_MS)}`])
+  assert.equal(value.playbackState, 'playing')
+})
+
+test('a station queued over live radio replaces it at once: live radio has no pause, and plays in a MusicKit player of its own', async () => {
+  // MusicKit's pause() does nothing on live radio.
+  const m = songMusic(S.playing, { pause: async () => {} })
+  m.nowPlayingItem = radio
+  const { ms } = await timed(() => page(m).playQueue({ station: 'ra.2' }, 0))
+  assert.equal(ms, 0)
+  assert.deepEqual(m.calls, ['setQueue ra.2 over playing at 12', 'play'])
+})
+
+test('a station whose pause of the song never settles still plays, a few seconds later, with the give-up', async () => {
+  const m = songMusic(S.playing, { pause: never })
+  const { value, ms } = await timed(() => page(m).playQueue({ station: 'ra.2' }, 0))
+  // The pause's bound, then the wait for the music to go quiet. Still playing, it isn't sought.
+  assert.equal(ms, SETTLE_MS + UNTIL_MS)
+  assert.deepEqual(m.calls, ['pause', 'setQueue ra.2 over playing at 12', 'play'])
+  assert.deepEqual(plain(value.gaveUp), [`pause() after ${secs(SETTLE_MS)}`])
+  assert.equal(value.playbackState, 'playing')
+})
+
+test('a stop while a station pauses the song cancels the station before its queue: the song stays, paused at 0:00', async () => {
+  const m = songMusic(S.playing)
+  const am = page(m)
+  const queued = am.playQueue({ station: 'ra.2' }, 0)
+  await m.reached('pause')
+  const stopped = await am.stop(1)
+  assert.equal(stopped.cancelled, 1)
+  await assert.rejects(queued, { message: 'stopped before it started' })
+  await idle()
+  assert.ok(!m.calls.some((c) => c.startsWith('setQueue') || c === 'play'), m.calls.join(', '))
+  assert.equal(am.snapshot().nowPlaying.id, '1')
+  assert.equal(am.snapshot().playbackState, 'paused')
+  assert.equal(m.currentPlaybackTime, 0)
+})
+
+// The rewind comes before the queue, so a queue that fails leaves the song as `am stop` would.
+test('a station whose queue fails after the rewind fails, and leaves the song paused at 0:00', async () => {
+  const m = songMusic(S.playing, { queue: () => Promise.reject(new Error('no such station')) })
+  const am = page(m)
+  await assert.rejects(am.playQueue({ station: 'ra.9' }, 0), { message: 'no such station' })
+  assert.deepEqual(m.calls, ['pause', 'seek 0', 'setQueue ra.9 over paused at 0'])
+  assert.equal(am.snapshot().nowPlaying.id, '1')
+  assert.equal(am.snapshot().playbackState, 'paused')
+  assert.equal(m.currentPlaybackTime, 0)
+})
+
+test('a station for neither a song nor an artist fails and leaves the song playing', async () => {
+  const m = songMusic(S.playing)
+  await assert.rejects(page(m).playQueue({ stationFor: {} }, 0), { message: 'stationFor needs a song or an artist' })
+  assert.deepEqual(m.calls, [])
+  assert.equal(m.isPlaying, true)
+})
+
 test('a new play waits for a cancelled one to end, so its late setQueue does not land on the new queue', async () => {
   const m = fakeMusic({ state: S.none, pause: async () => {}, seek: async () => {} })
   m.nowPlayingItem = null
@@ -1270,26 +1386,65 @@ function memoryStorage() {
   }
 }
 
+const nonceIn = (url) => new URL(url, 'http://localhost').searchParams.get('engine')
+
 // A launch of the engine page at `search` (the URL's query). Each `load()` is one page load, as a
 // browser runs it until it starts reporting: the daemon grants its claim and the DOM loads, so it
 // opens the event stream. A later `load()` is a reload: the same URL, and the launch keeps its
 // sessionStorage, localStorage and window.name, so a page load id kept in any of them fails the
 // reload test. A load's `claims` holds each claim as its method and nonce, `streams` each event
-// stream's nonce, `reports` each report's body; `tick` runs its once-a-second report.
+// stream's nonce, `sockets` each WebSocket it opened, `reports` each report's body as sent over
+// one, and `sentAt` when (virtual ms); `intervals` holds each timer's period, `tick` runs them
+// (the once-a-second report), and `ctx` is its window.
+//
+// Its WebSocket is a browser's as far as the page can tell: it opens on the next turn of the
+// clock, its `send` throws while it is still opening and drops what it is given once closed, and
+// `drop()` closes it from the daemon's end, or refuses it while it opens.
 function engineLaunch(search) {
-  const nonceIn = (url) => new URL(url, 'http://localhost').searchParams.get('engine')
   const kept = { sessionStorage: memoryStorage(), localStorage: memoryStorage(), name: '' }
   let lastWindow = null
   return {
     async load() {
       if (lastWindow) kept.name = lastWindow.name
-      const sent = { claims: [], streams: [], reports: [] }
+      const sent = { claims: [], streams: [], sockets: [], reports: [], sentAt: [] }
       const ticks = []
       const domLoaded = []
       const signin = { addEventListener: noop }
+      class WebSocket {
+        static CONNECTING = 0
+        static OPEN = 1
+        static CLOSING = 2
+        static CLOSED = 3
+        onopen = null
+        onclose = null
+        constructor(url) {
+          this.url = url
+          this.readyState = WebSocket.CONNECTING
+          sent.sockets.push(this)
+          clock().setTimeout(() => {
+            if (this.readyState !== WebSocket.CONNECTING) return
+            this.readyState = WebSocket.OPEN
+            this.onopen?.({ type: 'open' })
+          }, 0)
+        }
+        send(data) {
+          if (this.readyState === WebSocket.CONNECTING) throw new Error('InvalidStateError: the WebSocket is still connecting')
+          if (this.readyState !== WebSocket.OPEN) return
+          sent.reports.push(JSON.parse(data))
+          sent.sentAt.push(clock().now)
+        }
+        close() {
+          this.drop()
+        }
+        drop() {
+          if (this.readyState === WebSocket.CLOSED) return
+          this.readyState = WebSocket.CLOSED
+          this.onclose?.({ type: 'close' })
+        }
+      }
       lastWindow = coldPage(null, {
         ...kept,
-        location: { search, reload: noop, replace: noop },
+        location: { search, host: 'localhost:47823', reload: noop, replace: noop },
         document: {
           getElementById: (id) => (id === 'signin' ? signin : null),
           addEventListener: (type, fn) => type === 'DOMContentLoaded' && domLoaded.push(fn),
@@ -1298,7 +1453,6 @@ function engineLaunch(search) {
         fetch: async (url, init = {}) => {
           const { pathname } = new URL(url, 'http://localhost')
           if (pathname === '/claim') sent.claims.push({ method: init.method ?? 'GET', engine: nonceIn(url) })
-          if (pathname === '/report') sent.reports.push(JSON.parse(init.body))
           return { status: 204 }
         },
         EventSource: class {
@@ -1306,10 +1460,11 @@ function engineLaunch(search) {
             sent.streams.push(nonceIn(url))
           }
         },
-        setInterval: (fn) => ticks.push(fn),
+        WebSocket,
+        setInterval: (fn, ms) => ticks.push({ fn, ms }),
       }).ctx
       for (const fn of domLoaded) await fn()
-      return { ...sent, tick: () => ticks.forEach((fn) => fn()) }
+      return { ...sent, ctx: lastWindow, intervals: ticks.map((t) => t.ms), tick: () => ticks.forEach((t) => t.fn()) }
     },
   }
 }
@@ -1328,9 +1483,10 @@ test('a reload keeps the launch nonce in its claim, stream and reports, and repo
     }
     loads.push({ name, ...load })
   }
-  for (const { name, claims, streams, reports } of loads) {
+  for (const { name, claims, streams, sockets, reports } of loads) {
     assert.deepEqual(claims, [{ method: 'GET', engine: 'l4unch' }], `the ${name}'s claims`)
     assert.deepEqual(streams, ['l4unch'], `the ${name}'s event streams`)
+    assert.deepEqual(sockets.map((s) => s.url), ['ws://localhost:47823/reports?engine=l4unch'], `the ${name}'s report sockets`)
     assert.ok(reports.length >= 3, `the ${name} sent ${reports.length} reports`)
     assert.deepEqual(new Set(reports.map((r) => r.engine)), new Set(['l4unch']), `the ${name}'s reports' nonces`)
     // One id for all of a page load's reports.
@@ -1340,6 +1496,54 @@ test('a reload keeps the launch nonce in its claim, stream and reports, and repo
   }
   const [first, reloaded] = loads.map((l) => l.reports[0].load)
   assert.notEqual(reloaded, first, 'the reload kept the first load\'s id')
+})
+
+const gaps = (times) => times.slice(1).map((t, i) => t - times[i])
+
+// Every report of a page load goes over its one socket: the timer's, once a second, and those its
+// events bring, at most about four a second, with the last of a burst sent at the burst's end.
+test('reports go over one socket per page load, once a second and at most about four a second in a burst', async () => {
+  const load = await engineLaunch('?engine=l4unch').load()
+  assert.deepEqual(load.intervals, [1000], 'the page\'s timers, ms')
+  for (let i = 0; i < 5; i++) {
+    load.tick()
+    await sleep(1000)
+  }
+  assert.equal(load.sockets.length, 1, 'report sockets')
+  assert.deepEqual(gaps(load.sentAt), [1000, 1000, 1000, 1000], 'the timer\'s reports, ms apart')
+
+  // An event every 50 ms for a second.
+  const before = load.sentAt.length
+  for (let i = 0; i < 20; i++) {
+    vm.runInContext(`note('burst', ${i})`, load.ctx)
+    await sleep(50)
+  }
+  await sleep(1000)
+  const burst = load.sentAt.slice(before)
+  assert.equal(load.sockets.length, 1, 'report sockets after the burst')
+  assert.ok(burst.length >= 4 && burst.length <= 5, `the burst sent ${burst.length} reports`)
+  for (const gap of gaps(burst)) assert.ok(gap >= 250, `two of the burst's reports ${gap} ms apart`)
+  assert.equal(load.reports.at(-1).lastEvents.at(-1).detail, 19, 'the burst\'s last event, in its last report')
+})
+
+// The socket closes when the daemon restarts, say: the next report opens another, which it goes out
+// over once it opens. One refused while it opens (a launch that is over) is tried again the same way.
+test('a report socket that closes is opened again by the next report, which goes out over the new one', async () => {
+  const load = await engineLaunch('?engine=l4unch').load()
+  load.tick()
+  await sleep(1000)
+  load.sockets[0].drop()
+  await sleep(500)
+  assert.equal(load.sockets.length, 1, 'report sockets before the next report')
+
+  load.tick()
+  load.sockets[1].drop()
+  await sleep(1000)
+  load.tick()
+  await sleep(1000)
+  assert.deepEqual(load.sockets.map((s) => s.url), Array(3).fill('ws://localhost:47823/reports?engine=l4unch'), 'report sockets')
+  assert.deepEqual(load.sockets.map((s) => s.readyState), [3, 3, 1], 'their states')
+  assert.deepEqual(load.sentAt, [0, 2500], 'when reports went out')
 })
 
 // Cold engine: the page is connected (the daemon can call it) before MusicKit is configured.

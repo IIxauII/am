@@ -44,6 +44,12 @@ pub const Reply = struct {
         WriteFailed,
     } || Allocator.Error || Io.Cancelable;
 
+    /// The server noticed the CLI close its end; false when it can't tell (`client_gone` null).
+    pub fn clientGone(r: *const Reply) bool {
+        const gone = r.client_gone orelse return false;
+        return gone.load(.acquire);
+    }
+
     /// Text for the CLI's stdout, sent at once.
     pub fn print(r: *Reply, comptime fmt: []const u8, args: anytype) Error!void {
         if (r.hung_up) return;
@@ -90,7 +96,8 @@ pub const Reply = struct {
         return .{ .arena = arena, .out = &sink.writer, .flushFn = noFlush, .flush_ctx = sink };
     }
 
-    fn noFlush(_: *anyopaque) Io.Writer.Error!void {}
+    /// The flush of a reply whose writer needs none (`discarding`, the tests' replies).
+    pub fn noFlush(_: *anyopaque) Io.Writer.Error!void {}
 
     /// Ends the endpoint with a failure: the CLI prints `error: <message>` and exits 1.
     pub fn fail(r: *Reply, comptime fmt: []const u8, args: anytype) Error {

@@ -26,6 +26,16 @@ pub const Images = enum {
     off,
 };
 
+/// The artwork setting: settings.json's `artwork`, which `v` cycles.
+pub const Artwork = enum {
+    /// Kitty images where the terminal can show them, else half blocks.
+    images,
+    /// Half blocks, always.
+    blocks,
+    /// No artwork, and none downloaded.
+    off,
+};
+
 pub const Protocol = enum {
     /// Kitty graphics shown through U+10EEEE placeholder text (Ghostty, kitty): the image lives
     /// in the cell grid, so redraws, scrolling and overwrites need no extra commands.
@@ -51,16 +61,50 @@ pub fn choose(environ: *const Environ.Map, kitty_ok: bool, images: Images) Proto
         .blocks => return .half_blocks,
         .placeholders => return .kitty_placeholders,
         .placements => return .kitty_placements,
-        .kitty => return if (placeholdersKnown(environ)) .kitty_placeholders else .kitty_placements,
+        .kitty => return kittyProtocol(environ),
         .auto => {},
     }
-    if (eql(env(environ, "TERM"), "dumb")) return .none;
+    if (fallback(environ, kitty_ok, .auto)) |f| return f.shows;
+    return kittyProtocol(environ);
+}
+
+/// The protocol for the artwork setting. `images` is what Images means: `auto`, or the kitty
+/// protocol `AM_IMAGES` names (settings.zig's `Tui.images`).
+pub fn protocolFor(environ: *const Environ.Map, kitty_ok: bool, artwork: Artwork, images: Images) Protocol {
+    return switch (artwork) {
+        .images => choose(environ, kitty_ok, images),
+        .blocks => .half_blocks,
+        .off => .none,
+    };
+}
+
+/// What Images shows instead of kitty images, and why.
+pub const Fallback = struct {
+    /// Half blocks, or none.
+    shows: Protocol,
+    /// E.g. `inside tmux`.
+    why: []const u8,
+};
+
+/// What `images` (as `choose` takes it) shows instead of kitty images in this terminal, or null
+/// when it shows them. Only `auto` falls back; the other values force a protocol.
+pub fn fallback(environ: *const Environ.Map, kitty_ok: bool, images: Images) ?Fallback {
+    if (images != .auto) return null;
+    if (eql(env(environ, "TERM"), "dumb")) return .{ .shows = .none, .why = "TERM=dumb" };
     // tmux swallows kitty APCs unless wrapped for passthrough, which this doesn't do.
-    if (kitty_ok and env(environ, "TMUX") == null) {
-        return if (placeholdersKnown(environ)) .kitty_placeholders else .kitty_placements;
-    }
-    if (env(environ, "NO_COLOR") != null) return .none;
-    return .half_blocks;
+    const tmux = env(environ, "TMUX") != null;
+    if (kitty_ok and !tmux) return null;
+    const no_color = env(environ, "NO_COLOR") != null;
+    return .{
+        .shows = if (no_color) .none else .half_blocks,
+        .why = if (tmux)
+            (if (no_color) "inside tmux, and NO_COLOR is set" else "inside tmux")
+        else if (no_color) "no answer to the graphics query, and NO_COLOR is set" else "no answer to the graphics query",
+    };
+}
+
+fn kittyProtocol(environ: *const Environ.Map) Protocol {
+    return if (placeholdersKnown(environ)) .kitty_placeholders else .kitty_placements;
 }
 
 /// Placeholder support can't be queried; these terminals have it (kitty since 0.28).
@@ -331,6 +375,45 @@ test "choose: AM_IMAGES overrides detection" {
     try testing.expectEqual(Protocol.kitty_placements, choose(&plain, false, .kitty));
     try testing.expectEqual(Protocol.kitty_placements, choose(&ghostty, true, .placements));
     try testing.expectEqual(Protocol.kitty_placeholders, choose(&plain, false, .placeholders));
+}
+
+test "fallback: what Images shows instead of kitty images in this terminal, and why" {
+    var ghostty = try mapOf(&.{.{ "TERM_PROGRAM", "ghostty" }});
+    defer ghostty.deinit();
+    try testing.expectEqual(@as(?Fallback, null), fallback(&ghostty, true, .auto));
+    try testing.expectEqualDeep(@as(?Fallback, .{ .shows = .half_blocks, .why = "no answer to the graphics query" }), fallback(&ghostty, false, .auto));
+
+    var tmux = try mapOf(&.{ .{ "TERM_PROGRAM", "ghostty" }, .{ "TMUX", "/tmp/tmux-501/default,1,0" } });
+    defer tmux.deinit();
+    try testing.expectEqualDeep(@as(?Fallback, .{ .shows = .half_blocks, .why = "inside tmux" }), fallback(&tmux, true, .auto));
+    try testing.expectEqualDeep(@as(?Fallback, .{ .shows = .half_blocks, .why = "inside tmux" }), fallback(&tmux, false, .auto));
+
+    var dumb = try mapOf(&.{.{ "TERM", "dumb" }});
+    defer dumb.deinit();
+    try testing.expectEqualDeep(@as(?Fallback, .{ .shows = .none, .why = "TERM=dumb" }), fallback(&dumb, true, .auto));
+
+    var no_color = try mapOf(&.{.{ "NO_COLOR", "1" }});
+    defer no_color.deinit();
+    try testing.expectEqual(@as(?Fallback, null), fallback(&no_color, true, .auto));
+    try testing.expectEqualDeep(@as(?Fallback, .{ .shows = .none, .why = "no answer to the graphics query, and NO_COLOR is set" }), fallback(&no_color, false, .auto));
+
+    // AM_IMAGES naming a kitty protocol forces it: nothing to fall back to.
+    try testing.expectEqual(@as(?Fallback, null), fallback(&tmux, false, .kitty));
+    try testing.expectEqual(@as(?Fallback, null), fallback(&dumb, false, .placements));
+}
+
+test "protocolFor: Blocks and Off whatever the terminal, Images as AM_IMAGES says (#12)" {
+    var ghostty = try mapOf(&.{.{ "TERM_PROGRAM", "ghostty" }});
+    defer ghostty.deinit();
+    var dumb = try mapOf(&.{ .{ "TERM", "dumb" }, .{ "NO_COLOR", "1" } });
+    defer dumb.deinit();
+    try testing.expectEqual(Protocol.kitty_placeholders, protocolFor(&ghostty, true, .images, .auto));
+    try testing.expectEqual(Protocol.half_blocks, protocolFor(&ghostty, false, .images, .auto));
+    // With AM_IMAGES=placements, Images is placements, not Ghostty's placeholders.
+    try testing.expectEqual(Protocol.kitty_placements, protocolFor(&ghostty, true, .images, .placements));
+    try testing.expectEqual(Protocol.half_blocks, protocolFor(&ghostty, true, .blocks, .placements));
+    try testing.expectEqual(Protocol.half_blocks, protocolFor(&dumb, false, .blocks, .auto));
+    try testing.expectEqual(Protocol.none, protocolFor(&ghostty, true, .off, .auto));
 }
 
 test "the startup query is the spec's 1x1 query, CSI 16 t and DA1" {

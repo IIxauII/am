@@ -42,7 +42,7 @@ pub const FakePage = struct {
     mutex: Io.Mutex = .init,
     /// Broadcast on every change to the loads and the gates.
     changed: Io.Condition = .init,
-    /// Held by a report from its snapshot to its post; taken before `mutex`.
+    /// Held by a report from its snapshot until the channel has it; taken before `mutex`.
     reporting: Io.Mutex = .init,
     /// The load tasks and the command handlers.
     tasks: Io.Group = .init,
@@ -311,7 +311,7 @@ pub const FakePage = struct {
         load.station_name = h.station_name;
     }
 
-    /// The current load posts its report now, as its timer would, so the channel's last
+    /// The current load sends its report now, as its timer would, so the channel's last
     /// report is what it holds.
     pub fn reportNow(fp: *FakePage) Io.Cancelable!void {
         const index = blk: {
@@ -396,6 +396,13 @@ pub const FakePage = struct {
         defer fp.mutex.unlock(fp.io);
         for (fp.called.items) |c| if (std.mem.eql(u8, c.load, load) and std.mem.eql(u8, c.method, method)) return true;
         return false;
+    }
+
+    /// How many page calls reached any page load so far.
+    pub fn callCount(fp: *FakePage) usize {
+        fp.mutex.lockUncancelable(fp.io);
+        defer fp.mutex.unlock(fp.io);
+        return fp.called.items.len;
     }
 
     /// Waits at `op`'s gate when this is the held one, and says how it was released. A held
@@ -550,8 +557,9 @@ pub const FakePage = struct {
         return false;
     }
 
-    /// Posts the load's report, as app.js's timer does; an unloaded load sends none. One at a
-    /// time, from its snapshot to its post: a report posted after `reportNow` was taken after it.
+    /// Sends the load's report, as app.js's timer does over its report socket; an unloaded load
+    /// sends none. One at a time, from its snapshot until the channel has it: a report sent after
+    /// `reportNow` was taken after it.
     fn report(fp: *FakePage, index: usize) Io.Cancelable!void {
         fp.reporting.lockUncancelable(fp.io);
         defer fp.reporting.unlock(fp.io);
@@ -1006,7 +1014,7 @@ pub const FakeLauncher = struct {
     relaunch_asks: u32 = 0,
     /// Every line for the daemon's log; guarded by the fake page's mutex.
     logged: std.ArrayList([]const u8) = .empty,
-    /// The next launch fails with this problem.
+    /// Every launch fails with this problem while it is set (`setRefuse`).
     refuse: ?[]const u8 = null,
     /// The next launch that starts the engine, held where its caller has the launch and
     /// hasn't recorded it yet; guarded by the fake page's mutex.
@@ -1024,6 +1032,23 @@ pub const FakeLauncher = struct {
 
     pub fn deinit(fl: *FakeLauncher) void {
         fl.logged.deinit(fl.fp.gpa);
+    }
+
+    /// How many launches started an engine so far; fine while a caller may still launch.
+    pub fn launchCount(fl: *FakeLauncher) u32 {
+        const io = fl.fp.io;
+        fl.mutex.lockUncancelable(io);
+        defer fl.mutex.unlock(io);
+        return fl.launches;
+    }
+
+    /// Launches fail with `why` from now on, or no longer (null); fine while a caller may
+    /// still launch.
+    pub fn setRefuse(fl: *FakeLauncher, why: ?[]const u8) void {
+        const io = fl.fp.io;
+        fl.mutex.lockUncancelable(io);
+        defer fl.mutex.unlock(io);
+        fl.refuse = why;
     }
 
     fn of(ptr: *anyopaque) *FakeLauncher {
@@ -1382,6 +1407,9 @@ pub const PageHost = struct {
     signin_window: bool = false,
     /// What the engine's idle close says while one runs.
     idle_close_in_s: i64 = 300,
+    /// The keep-engine requests holding the engine while one runs, as `Requests.keepers` counts
+    /// them; a sign-in window has none.
+    keep_engine_requests: u32 = 0,
     /// The daemon's clock is this far ahead of the page's last report: as if the page had
     /// stopped reporting that long ago.
     report_older_by_ms: u64 = 0,
@@ -1458,6 +1486,14 @@ pub const PageHost = struct {
         return ph.logged.items;
     }
 
+    /// Whether the daemon's log has `line` so far; fine while callers still run.
+    pub fn hasLogged(ph: *PageHost, line: []const u8) bool {
+        ph.mutex.lockUncancelable(ph.rig.io);
+        defer ph.mutex.unlock(ph.rig.io);
+        for (ph.logged.items) |l| if (std.mem.eql(u8, l, line)) return true;
+        return false;
+    }
+
     fn of(ptr: *anyopaque) *PageHost {
         return @ptrCast(@alignCast(ptr));
     }
@@ -1500,7 +1536,7 @@ pub const PageHost = struct {
             rig.launcher.mutex.lockUncancelable(rig.io);
             defer rig.launcher.mutex.unlock(rig.io);
             if (rig.launcher.live) |live| if (rig.channel.currentLaunch() == live.generation) {
-                s.engine = .{ .kind = "firefox", .pid = live.pid, .headless = true, .signin_window = false, .idle_close_in_s = ph.idle_close_in_s };
+                s.engine = .{ .kind = "firefox", .pid = live.pid, .headless = true, .signin_window = false, .idle_close_in_s = ph.idle_close_in_s, .keep_engine_requests = ph.keep_engine_requests };
             };
         }
         if (try rig.channel.lastReport(arena)) |last| {

@@ -22,6 +22,10 @@ _Avoid_: session, boot
 One load of the engine page within a launch, named by the `load` id in its reports. A reload keeps the launch's nonce and starts a new page load.
 _Avoid_: refresh
 
+**Report socket**:
+The WebSocket each page load opens to the daemon (`/reports?engine=<nonce>`) and sends every report over. Only a page with the current launch's nonce gets one; the next report opens a new one after it closes.
+_Avoid_: report stream (the event stream carries commands)
+
 **Engine page module**:
 The one place (`src/daemon/engine_page.zig`) that owns the engine page from a launch until MusicKit is fit for the caller: the wait for the page, the Widevine wait, every reload, the check of the page's developer token, and the mark that a page load is behind on the Music User Token.
 _Avoid_: page manager, sync
@@ -61,12 +65,36 @@ _Avoid_: kept, skipped
 A page load whose MusicKit doesn't hold the stored Music User Token: its report names another one (`musicUserToken`, a hash as for the developer token). A page load that names none (an older page, a browser that can't hash, MusicKit holding none) is behind when it began before the last sign-in stored a new token, since it may still use the old one. The next repair for a play reloads it first.
 _Avoid_: stale token, page token
 
+### When the engine runs
+
+**Idle close**:
+The background process closing the engine after `ENGINE_IDLE_MINUTES` with nothing playing and nothing using it.
+_Avoid_: timeout, sleep
+
+**Keep-alive**:
+The setting that keeps the engine launched for as long as a TUI that has it on is open.
+_Avoid_: warm mode, always-on
+
 ### Settings
 
 **Setting**:
-A choice about how am runs (`ENGINE`, `AM_IMAGES` …), read from the environment or the env file; the environment wins.
+A choice about how am runs. The background process's settings and `AM_IMAGES` are read from the environment, else the env file, and the environment wins. The TUI's own settings (keep-alive, artwork, bindings) are read from the settings file, and `AM_IMAGES` wins over its artwork.
 _Avoid_: option, config value
+
+**Settings file**:
+`settings.json` in am's config directory, holding only what differs from the defaults; the Settings page writes it and hand edits are supported.
+_Avoid_: config file, preferences
 
 **Env file**:
 The KEY=VALUE file `env` in am's config directory that holds settings.
 _Avoid_: config file, dotenv
+
+### Keys
+
+**Binding**:
+The keys an action has in a context (`lists` or `typing`): its defaults, changed by the settings file.
+_Avoid_: shortcut, hotkey, keymap
+
+**Action**:
+What a binding runs, named in the settings file (`play_pause`, `seek_back_30`). The names are a public format and never renamed.
+_Avoid_: command (the code's word)

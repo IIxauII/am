@@ -21,6 +21,8 @@ pub fn readFile(io: Io, arena: Allocator, config_dir: []const u8, name: []const 
 /// File names inside the config directory.
 pub const file = struct {
     pub const env = "env";
+    /// The TUI's own settings (`settings.zig`): only what differs from the defaults.
+    pub const settings = "settings.json";
     /// Secret: written mode 600.
     pub const developer_token = "developer-token.jwt";
     /// The shared developer token, downloaded from `TOKEN_URL` (`token_source.zig`). Mode 600.
